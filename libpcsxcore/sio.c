@@ -466,6 +466,7 @@ void SaveMcd(char *mcd, char *data, uint32_t adr, int size) {
 void CreateMcd(char *mcd) {
 	FILE *f;
 	int64_t sz;
+	long card_start;
 	int s = MCD_SIZE;
 	int i = 0, j;
 
@@ -551,6 +552,7 @@ void CreateMcd(char *mcd) {
 				fputc(0, f);
 		}
 	}
+	card_start = ftell(f);
 	fputc('M', f);
 	s--;
 	fputc('C', f);
@@ -616,7 +618,16 @@ void CreateMcd(char *mcd) {
 		}
 	}
 
-	while ((s--) >= 0)
+	// frame 63 is the write test frame, a copy of the header
+	for (i = ftell(f) - card_start; i < 63 * 128; i++)
+		fputc(0, f);
+	fputc('M', f);
+	fputc('C', f);
+	for (i = ftell(f) - card_start; i < 64 * 128 - 1; i++)
+		fputc(0, f);
+	fputc(0xe, f);
+
+	for (i = ftell(f) - card_start; i < MCD_SIZE; i++)
 		fputc(0, f);
 
 	fclose(f);

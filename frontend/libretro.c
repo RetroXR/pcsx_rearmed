@@ -268,6 +268,15 @@ static void init_memcard(char *mcd_data)
       mcd_data[off++] = 0xff;
       off += 0x76;
    }
+
+   // frame 63 is the write test frame, a copy of the header. The BIOS writes
+   // it when it formats a card, so leaving it out makes our blank cards
+   // distinguishable from real ones and trips card validators.
+   off = 63 * 128;
+   mcd_data[off++] = 'M';
+   mcd_data[off++] = 'C';
+   off += 0x7d;
+   mcd_data[off++] = 0x0e;
 }
 
 static void bgr_to_fb_empty(void *dst, const void *src, int dst_pixels)
