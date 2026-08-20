@@ -181,6 +181,34 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "shared",
    },
+   {
+      "pcsx_rearmed_memcard1_inserted",
+      "Memory Card 1 Inserted",
+      NULL,
+      "Whether a card is physically in slot 1. 'Removed' makes the slot report no device at all, which is what a game sees with an empty slot, rather than the 'unformatted card' it would report for a blank one. This applies while a game is running, so a frontend can eject and insert a card without a restart, and the game is told the card changed. The card data is left alone either way. Has no effect if Memory Card 1 Type is 'No Memory Card'.",
+      NULL,
+      "system",
+      {
+         { "enabled", "Inserted" },
+         { "disabled", "Removed" },
+         { NULL, NULL },
+      },
+      "enabled",
+   },
+   {
+      "pcsx_rearmed_memcard2_inserted",
+      "Memory Card 2 Inserted",
+      NULL,
+      "Same as above, but card in slot 2.",
+      NULL,
+      "system",
+      {
+         { "enabled", "Inserted" },
+         { "disabled", "Removed" },
+         { NULL, NULL },
+      },
+      "enabled",
+   },
 #if defined(HAVE_CDROM) || defined(USE_ASYNC_CDROM)
 #define V(x) { #x, NULL }
    {

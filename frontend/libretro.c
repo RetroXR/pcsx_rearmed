@@ -138,6 +138,11 @@ static enum {
    MEMCARDTYPE_LIBRETRO,
 } memcard_type[2];
 
+// whether a card is physically in the slot, as opposed to what kind of card
+// it is. Driven by pcsx_rearmed_memcardN_inserted and applied at runtime.
+static bool memcard_inserted[2] = { true, true };
+static bool memcard_insert_pending;
+
 typedef enum
 {
    FRAMESKIP_NONE = 0,
@@ -1891,6 +1896,7 @@ static void retro_set_audio_buff_status_cb(void)
 
 static void update_variables(bool in_flight);
 static void load_memcards(void);
+static void apply_memcard_inserted(void);
 
 static int get_bool_variable(const char *key)
 {
@@ -3062,6 +3068,28 @@ static void update_variables(bool in_flight)
    }
 #endif
 
+   {
+      int i;
+      for (i = 0; i < 2; i++)
+      {
+         char key[40];
+         bool inserted;
+
+         snprintf(key, sizeof(key), "pcsx_rearmed_memcard%d_inserted", i + 1);
+         var.value = NULL;
+         var.key = key;
+         if (!environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value)
+            continue;
+
+         inserted = strcmp(var.value, "disabled") != 0;
+         if (inserted != memcard_inserted[i])
+         {
+            memcard_inserted[i] = inserted;
+            memcard_insert_pending = true;
+         }
+      }
+   }
+
    if (in_flight)
    {
       // inform core things about possible config changes
@@ -3544,6 +3572,9 @@ void retro_run(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       update_variables(true);
 
+   if (memcard_insert_pending)
+      apply_memcard_inserted();
+
    psxRegs.stop = 0;
    psxCpu->Execute(&psxRegs);
 
@@ -3793,6 +3824,34 @@ static void load_memcards(void)
       }
       LoadMcd(c, mcdpath);
    }
+   apply_memcard_inserted();
+}
+
+// LoadMcd() always leaves the slot occupied, so the requested insert state has
+// to be reapplied after it. SetMcdInserted() refuses while the SIO is mid
+// transfer, so keep asking until it takes.
+static void apply_memcard_inserted(void)
+{
+   bool pending = false;
+   int i;
+
+   for (i = 0; i < 2; i++)
+   {
+      int ret;
+
+      // a slot configured as empty has no card to pull out
+      if (memcard_type[i] == MEMCARDTYPE_NONE)
+         continue;
+
+      ret = SetMcdInserted(i + 1, memcard_inserted[i]);
+      if (ret < 0)
+         pending = true;
+      else if (ret > 0)
+         SysPrintf("memcard %d %s\n", i + 1,
+               memcard_inserted[i] ? "inserted" : "removed");
+   }
+
+   memcard_insert_pending = pending;
 }
 
 static bool get_bios_config_hle(void)
