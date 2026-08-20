@@ -1680,13 +1680,13 @@ static void psxBios_cd() { // 0x40
 
 static void psxBios_format() { // 0x41
 	PSXBIOS_LOG("psxBios_%s %x(%s)\n", biosB0n[0x41], a0, Ra0);
-	if (strcmp(Ra0, "bu00:") == 0 && Config.Mcd1[0] != '\0')
+	if (strcmp(Ra0, "bu00:") == 0 && Config.Mcd1[0] != '\0' && !McdDisable[0])
 	{
 		CreateMcd(Config.Mcd1);
 		LoadMcd(1, Config.Mcd1);
 		v0 = 1;
 	}
-	else if (strcmp(Ra0, "bu10:") == 0 && Config.Mcd2[0] != '\0')
+	else if (strcmp(Ra0, "bu10:") == 0 && Config.Mcd2[0] != '\0' && !McdDisable[1])
 	{
 		CreateMcd(Config.Mcd2);
 		LoadMcd(2, Config.Mcd2);

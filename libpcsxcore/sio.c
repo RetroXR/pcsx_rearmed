@@ -408,6 +408,28 @@ void LoadMcds(char *mcd1, char *mcd2) {
 	LoadMcd(2, mcd2);
 }
 
+// Insert or remove the card in a slot, as if it was physically plugged in or
+// pulled out. Unlike LoadMcd() this leaves the card data alone, so a frontend
+// that owns the bytes can eject and reinsert without reloading them.
+// Returns -1 if a card transfer is in progress and the caller should retry on
+// a later frame, 1 if the slot changed, 0 if it was already as requested.
+int SetMcdInserted(int mcd, int inserted) {
+	int port = mcd - 1;
+
+	if (port < 0 || port > 1)
+		return -1;
+	if (!McdDisable[port] == !!inserted)
+		return 0; // already there
+	if (mcdst != 0)
+		return -1; // mid transfer, pulling now would corrupt it
+
+	McdDisable[port] = !inserted;
+	if (inserted)
+		McdFlag[port] |= 8; // mark as new so the game rereads the directory
+
+	return 1;
+}
+
 void SaveMcd(char *mcd, char *data, uint32_t adr, int size) {
 	FILE *f;
 
