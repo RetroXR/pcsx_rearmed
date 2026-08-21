@@ -81,6 +81,7 @@ static uint64_t nl_safe;
 static u8 nl_lines;
 static int nl_lines_published;
 static u8 nl_peer_lines;
+static int nl_peer_lines_seen;
 
 static struct nl_event nl_pending[NL_PENDING_MAX];
 static unsigned nl_pending_count;
@@ -129,6 +130,7 @@ static void nl_forget_peer(void)
 {
 	nl_pending_count = 0;
 	nl_peer_lines = 0;
+	nl_peer_lines_seen = 0;
 	nl_lines_published = 0;
 	sio1SetPeerLines(0, 0);
 }
@@ -168,11 +170,11 @@ static void nl_refresh_peers(void)
 		return;
 	}
 
-	/* Say again where this console's lines are. They are announced when they
-	 * CHANGE, so a console cabled in after the last change would otherwise
-	 * never hear one, and both ends would sit reading DSR low and conclude
-	 * there is nothing on the wire. */
-	nl_publish_lines();
+	/* A cable has just been seated. Whatever either console heard before is
+	 * from a bus that no longer exists, so both ends start listening again. */
+	nl_peer_lines_seen = 0;
+	nl_peer_lines = 0;
+	sio1SetPeerLines(0, 0);
 }
 
 static void nl_queue(uint64_t tick, u8 type, u8 value)
@@ -193,11 +195,23 @@ static void nl_apply(const struct nl_event *ev)
 	case NL_BYTE:
 		sio1Receive(ev->value);
 		break;
-	case NL_LINES:
+	case NL_LINES: {
+		int first = !nl_peer_lines_seen;
+
 		nl_peer_lines = ev->value;
+		nl_peer_lines_seen = 1;
 		/* Crossed: the peer's DTR arrives here as DSR, its RTS as CTS. */
 		sio1SetPeerLines(!!(nl_peer_lines & NL_DTR), !!(nl_peer_lines & NL_RTS));
+
+		/* Answer the first one, and only the first. Hearing from the peer is
+		 * proof that it has a timeline for a message to be placed on, which is
+		 * exactly what an earlier announcement of ours may have lacked.
+		 * Answering every one instead makes the two consoles greet each other
+		 * for the rest of the session. */
+		if (first)
+			nl_publish_lines();
 		break;
+	}
 	}
 }
 
@@ -271,15 +285,35 @@ static u32 nl_drv_poll(u32 grain, u32 horizon)
 	if (!nl_attached)
 		return grain;
 
-	nl_refresh_peers();
-
 	now = nl_clock();
 	nl_safe = now + horizon;
 
 	/* Published before reading, because a peer parked on this console's horizon
 	 * cannot move until it has been told the horizon moved, and it may be
-	 * holding the very message this console is about to want. */
+	 * holding the very message this console is about to want.
+	 *
+	 * And before anything is SENT, because this call is what anchors the
+	 * timeline the bus places a message on. A cable being seated re-anchors
+	 * every console on it, and a message put on the wire between that moment
+	 * and this console's next rendezvous carries an offset from an origin that
+	 * has been thrown away. */
 	grant = nl_link->advance(nl_handle, now, nl_safe, now + grain);
+
+	nl_refresh_peers();
+
+	/* Keep saying where the lines are until the other console answers.
+	 *
+	 * One announcement is not enough, and the reason is worth stating: the bus
+	 * cannot place a message on a peer that has not published its own position
+	 * yet, so it drops it. Both consoles re-anchor the instant a cable is
+	 * seated, so whichever of them notices first announces into exactly that
+	 * gap and is heard by nobody. It then has no reason to try again -- the
+	 * membership it is watching did not change -- and that console's DTR is
+	 * never seen, so the game on the other end sits reading DSR low with a
+	 * cable plugged in and a peer count of two. */
+	if (nl_peers >= 2 && !nl_peer_lines_seen)
+		nl_publish_lines();
+
 	nl_drain();
 	nl_release();
 
