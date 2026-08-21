@@ -51,6 +51,15 @@ enum {
 
 struct nl_event {
 	uint64_t tick;
+	/* Arrival order, which is what settles a tie.
+	 *
+	 * Two bytes can carry the SAME tick: the rendezvous interval has a floor,
+	 * so at a fast enough baud rate more than one byte's time fits inside it,
+	 * and everything a console originates in that window is stamped no earlier
+	 * than the horizon it has already promised. Ordering by tick alone then
+	 * leaves the tie to whatever the queue happens to look like, and a serial
+	 * port that hands its bytes over in the wrong order is not a serial port. */
+	uint64_t seq;
 	u8 type;
 	u8 value;
 };
@@ -85,6 +94,7 @@ static int nl_peer_lines_seen;
 
 static struct nl_event nl_pending[NL_PENDING_MAX];
 static unsigned nl_pending_count;
+static uint64_t nl_next_seq;
 
 static uint64_t nl_clock(void)
 {
@@ -184,6 +194,7 @@ static void nl_queue(uint64_t tick, u8 type, u8 value)
 		return;
 	}
 	nl_pending[nl_pending_count].tick = tick;
+	nl_pending[nl_pending_count].seq = nl_next_seq++;
 	nl_pending[nl_pending_count].type = type;
 	nl_pending[nl_pending_count].value = value;
 	nl_pending_count++;
@@ -231,7 +242,10 @@ static void nl_release(void)
 		for (i = 0; i < nl_pending_count; i++) {
 			if (nl_pending[i].tick > now)
 				continue;
-			if (best == NL_PENDING_MAX || nl_pending[i].tick < nl_pending[best].tick)
+			if (best == NL_PENDING_MAX ||
+			    nl_pending[i].tick < nl_pending[best].tick ||
+			    (nl_pending[i].tick == nl_pending[best].tick &&
+			     nl_pending[i].seq < nl_pending[best].seq))
 				best = i;
 		}
 		if (best == NL_PENDING_MAX)
@@ -374,6 +388,7 @@ void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port)
 	nl_now = 0;
 	nl_safe = 0;
 	nl_pending_count = 0;
+	nl_next_seq = 0;
 	nl_lines = 0;
 	nl_lines_published = 0;
 	nl_peer_lines = 0;

@@ -164,14 +164,27 @@ static int sio1_in_use(void) {
 }
 
 static u32 sio1_grain(void) {
-	u32 grain;
+	u32 grain, cpb;
 
 	if (!sio1_connected() || !sio1_in_use())
 		return SIO1_GRAIN_IDLE;
 
-	grain = sio1_cycles_per_byte() / 2;
+	cpb = sio1_cycles_per_byte();
+	grain = cpb / 2;
 	if (grain < SIO1_GRAIN_MIN)
 		grain = SIO1_GRAIN_MIN;
+
+	/* Never coarser than one byte on the wire, whatever the floor says.
+	 *
+	 * The floor is there to bound cost, but a rendezvous interval longer than a
+	 * byte's time means more than one byte is originated inside one window, and
+	 * everything originated in a window is stamped no earlier than the horizon
+	 * already promised. Two bytes then land on the SAME tick and the receiving
+	 * console sees them arrive together rather than a byte apart, which is not
+	 * what a serial line does and not what a game timing its protocol expects.
+	 * Only bites above about 66 kbit, where a byte is shorter than the floor. */
+	if (grain > cpb)
+		grain = cpb;
 	if (grain > SIO1_GRAIN_MAX)
 		grain = SIO1_GRAIN_MAX;
 	return grain;
