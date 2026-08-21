@@ -3,6 +3,7 @@
 #include "r3000a.h"
 #include "cdrom.h"
 #include "psxdma.h"
+#include "sio1.h"
 #include "mdec.h"
 #include "psxevents.h"
 
@@ -59,6 +60,7 @@ static irq_func * const irq_funcs[] = {
 	[PSXINT_SPU_UPDATE] = spuUpdate,
 	[PSXINT_SPU_IRQ] = spuDelayedIrq,
 	[PSXINT_RCNT] = psxRcntUpdate,
+	[PSXINT_SIO1] = sio1Update,
 };
 
 void irq_test(psxCP0Regs *cp0)

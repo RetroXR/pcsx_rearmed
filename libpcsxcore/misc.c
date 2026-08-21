@@ -944,6 +944,14 @@ int LoadState(const char *file) {
 	ndrc_freeze(f, 0);
 	padFreeze(f, 0);
 
+	// The serial port is not in the savestate. What it holds is one end of a
+	// live cable -- bytes part way down the wire, and a peer console that was
+	// never asked to rewind -- so there is nothing here that would still be
+	// true after a load. Start it clean instead, which also re-anchors the
+	// link driver's timeline: psxRegs.cycle has just moved by an arbitrary
+	// amount, including backwards.
+	sio1Reset();
+
 	events_restore();
 	if (Config.HLE)
 		psxBiosCheckExe(biosBranchCheckOld, 0x60, 1);

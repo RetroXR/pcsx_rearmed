@@ -90,6 +90,41 @@ static void io_write_sio32(u32 value)
 	sioWrite8(value);
 }
 
+/* SIO1's data register. Like SIO0's above, one byte whatever the access width:
+ * a wider read pops one byte and leaves the rest of the FIFO alone, which is
+ * what the interpreter path has always done. */
+static u32 io_read_sio1_16(void)
+{
+	return sio1Read8();
+}
+
+static u32 io_read_sio1_32(void)
+{
+	return sio1Read8();
+}
+
+static void io_write_sio1_16(u32 value)
+{
+	sio1Write8(value);
+}
+
+static void io_write_sio1_32(u32 value)
+{
+	sio1Write8(value);
+}
+
+/* MODE and CTRL are one aligned word, so a 32-bit access reaches both. */
+static u32 io_read_sio1_mode_ctrl(void)
+{
+	return sio1ReadMode16() | ((u32)sio1ReadCtrl16() << 16);
+}
+
+static void io_write_sio1_mode_ctrl(u32 value)
+{
+	sio1WriteMode16(value);
+	sio1WriteCtrl16(value >> 16);
+}
+
 #if !defined(DRC_DBG) && defined(__arm__)
 
 static void map_rcnt_rcount0(u32 mode)
@@ -356,6 +391,9 @@ void new_dyna_pcsx_mem_init(void)
 
 	map_item(&mem_iortab[IOMEM32(0x1040)], io_read_sio32, 1);
 	map_item(&mem_iortab[IOMEM32(0x1044)], sioReadStat16, 1);
+	map_item(&mem_iortab[IOMEM32(0x1050)], io_read_sio1_32, 1);
+	map_item(&mem_iortab[IOMEM32(0x1054)], sio1ReadStat16, 1);
+	map_item(&mem_iortab[IOMEM32(0x1058)], io_read_sio1_mode_ctrl, 1);
 	map_item(&mem_iortab[IOMEM32(0x1100)], psxRcntRcount0, 1);
 	map_item(&mem_iortab[IOMEM32(0x1104)], io_rcnt_read_mode0, 1);
 	map_item(&mem_iortab[IOMEM32(0x1108)], io_rcnt_read_target0, 1);
@@ -375,7 +413,11 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iortab[IOMEM16(0x1048)], sioReadMode16, 1);
 	map_item(&mem_iortab[IOMEM16(0x104a)], sioReadCtrl16, 1);
 	map_item(&mem_iortab[IOMEM16(0x104e)], sioReadBaud16, 1);
+	map_item(&mem_iortab[IOMEM16(0x1050)], io_read_sio1_16, 1);
 	map_item(&mem_iortab[IOMEM16(0x1054)], sio1ReadStat16, 1);
+	map_item(&mem_iortab[IOMEM16(0x1058)], sio1ReadMode16, 1);
+	map_item(&mem_iortab[IOMEM16(0x105a)], sio1ReadCtrl16, 1);
+	map_item(&mem_iortab[IOMEM16(0x105e)], sio1ReadBaud16, 1);
 	map_item(&mem_iortab[IOMEM16(0x1100)], psxRcntRcount0, 1);
 	map_item(&mem_iortab[IOMEM16(0x1104)], io_rcnt_read_mode0, 1);
 	map_item(&mem_iortab[IOMEM16(0x1108)], io_rcnt_read_target0, 1);
@@ -387,6 +429,7 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iortab[IOMEM16(0x1128)], io_rcnt_read_target2, 1);
 
 	map_item(&mem_iortab[IOMEM8(0x1040)], sioRead8, 1);
+	map_item(&mem_iortab[IOMEM8(0x1050)], sio1Read8, 1);
 	map_item(&mem_iortab[IOMEM8(0x1800)], cdrRead0, 1);
 	map_item(&mem_iortab[IOMEM8(0x1801)], cdrRead1, 1);
 	map_item(&mem_iortab[IOMEM8(0x1802)], cdrRead2, 1);
@@ -437,6 +480,13 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iowtab[IOMEM16(0x1048)], sioWriteMode16, 1);
 	map_item(&mem_iowtab[IOMEM16(0x104a)], sioWriteCtrl16, 1);
 	map_item(&mem_iowtab[IOMEM16(0x104e)], sioWriteBaud16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1050)], io_write_sio1_16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1054)], sio1WriteStat16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x1058)], sio1WriteMode16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x105a)], sio1WriteCtrl16, 1);
+	map_item(&mem_iowtab[IOMEM16(0x105e)], sio1WriteBaud16, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1050)], io_write_sio1_32, 1);
+	map_item(&mem_iowtab[IOMEM32(0x1058)], io_write_sio1_mode_ctrl, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1060)], io_write_force32_1060, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1070)], psxHwWriteIstat, 1);
 	map_item(&mem_iowtab[IOMEM16(0x1074)], psxHwWriteImask, 1);
@@ -471,6 +521,7 @@ void new_dyna_pcsx_mem_init(void)
 	map_item(&mem_iowtab[IOMEM16(0x1128)], io_rcnt_write_target2, 1);
 
 	map_item(&mem_iowtab[IOMEM8(0x1040)], sioWrite8, 1);
+	map_item(&mem_iowtab[IOMEM8(0x1050)], sio1Write8, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1800)], cdrWrite0, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1801)], cdrWrite1, 1);
 	map_item(&mem_iowtab[IOMEM8(0x1802)], cdrWrite2, 1);
