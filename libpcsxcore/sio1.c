@@ -88,6 +88,15 @@ static struct {
 
 	u8  tx_hold;
 	u8  tx_hold_full;
+
+	/* Whether the byte in the holding register is going out.
+	 *
+	 * TXEN decides when a transfer STARTS, and it is asked once: either the
+	 * byte is written while the transmitter is enabled, or it was written
+	 * first and the enable arrives after. Once the answer is yes it stays
+	 * yes, and a later clear of TXEN does not take the byte back. */
+	u8  tx_committed;
+
 	u8  tx_active;
 	u32 tx_end;
 
@@ -177,7 +186,7 @@ static u32 sio1_rx_threshold(void) {
 static void sio1_tx_kick(void) {
 	u32 cycles;
 
-	if (sio1.tx_active || !sio1.tx_hold_full || !(sio1.ctrl & SIO1_TX_EN))
+	if (sio1.tx_active || !sio1.tx_hold_full || !sio1.tx_committed)
 		return;
 	if (!sio1_enabled()) {
 		/* No wire and no event to time a transfer against, so the byte is
@@ -188,6 +197,7 @@ static void sio1_tx_kick(void) {
 
 	cycles = sio1_cycles_per_byte();
 	sio1.tx_hold_full = 0;
+	sio1.tx_committed = 0;
 	sio1.tx_active = 1;
 	sio1.tx_end = psxRegs.cycle + cycles;
 
@@ -230,6 +240,13 @@ void sio1SetDriver(const struct sio1_driver *drv) {
 }
 
 void sio1Receive(unsigned char data) {
+	/* The receiver is switched off, so nothing is latched. A game turns it off
+	 * while it reconfigures the port, and a byte kept from that window is still
+	 * sitting in the FIFO when the next packet starts -- which shifts every byte
+	 * of that packet one place along and overruns its tail. */
+	if (!(sio1.ctrl & SIO1_RX_EN))
+		return;
+
 	if (sio1.rx_count >= SIO1_FIFO_SIZE) {
 		sio1.errors |= SIO1_RX_OVERRUN;
 		return;
@@ -301,6 +318,8 @@ void sio1Update(void) {
 void sio1Write8(unsigned char value) {
 	sio1.tx_hold = value;
 	sio1.tx_hold_full = 1;
+	if (sio1.ctrl & SIO1_TX_EN)
+		sio1.tx_committed = 1;
 	sio1_tx_kick();
 }
 
@@ -339,6 +358,8 @@ void sio1WriteCtrl16(unsigned short value) {
 
 	/* A game commonly fills the holding register before enabling the
 	 * transmitter, so this write is where the byte actually leaves. */
+	if (sio1.ctrl & SIO1_TX_EN)
+		sio1.tx_committed = 1;
 	sio1_tx_kick();
 }
 
