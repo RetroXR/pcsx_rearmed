@@ -209,6 +209,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled",
    },
+   {
+      "pcsx_rearmed_link_cable",
+      "Link Cable",
+      NULL,
+      "Emulate a link cable between this console's serial port and another PlayStation running in the same frontend, for two-player games such as WipEout and Ridge Racer. The frontend decides which consoles are cabled together and must support the link interface; where it does not, this does nothing. Turning it off restores the fixed serial port status the core has always reported, which some games rely on to conclude there is no cable.",
+      NULL,
+      "system",
+      {
+         { "enabled",  "enabled" },
+         { "disabled", "disabled" },
+         { NULL, NULL },
+      },
+      "enabled",
+   },
 #if defined(HAVE_CDROM) || defined(USE_ASYNC_CDROM)
 #define V(x) { #x, NULL }
    {

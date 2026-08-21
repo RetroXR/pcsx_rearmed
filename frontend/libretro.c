@@ -51,6 +51,7 @@
 
 #include <libretro.h>
 #include "libretro_core_options.h"
+#include "sio1_netlink.h"
 
 #ifdef USE_LIBRETRO_VFS
 #include <streams/file_stream_transforms.h>
@@ -142,6 +143,13 @@ static enum {
 // it is. Driven by pcsx_rearmed_memcardN_inserted and applied at runtime.
 static bool memcard_inserted[2] = { true, true };
 static bool memcard_insert_pending;
+
+// The link cable. Fetched once and valid for the life of the core, so a
+// non-NULL interface means only that the frontend can host a link, never that
+// anything is cabled to this console: with no peers the bus grants without
+// bound and the port behaves as one with a dead cable in it.
+static const struct retro_link_interface *link_interface;
+static bool link_attached;
 
 typedef enum
 {
@@ -3099,6 +3107,24 @@ static void update_variables(bool in_flight)
       }
    }
 
+   if (link_interface)
+   {
+      // Not a restart-time option. Attaching only installs a driver behind the
+      // serial port, and the port is one the guest polls rather than one it
+      // configures once, so a cable can be seated or pulled while a game runs
+      // exactly as it can on the desk.
+      bool want = get_bool_variable("pcsx_rearmed_link_cable");
+
+      if (want != link_attached)
+      {
+         if (want)
+            sio1NetlinkAttach(link_interface, 0);
+         else
+            sio1NetlinkDetach();
+         link_attached = want;
+      }
+   }
+
    if (in_flight)
    {
       // inform core things about possible config changes
@@ -4051,12 +4077,29 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
+   // Probe the experimental number first and the plain one after, so a build
+   // made today keeps working against a frontend that has since adopted the
+   // unflagged command.
+   {
+      static struct retro_link_interface link;
+
+      memset(&link, 0, sizeof(link));
+      if (environ_cb(RETRO_ENVIRONMENT_GET_LINK_INTERFACE, &link) ||
+          environ_cb(RETRO_ENVIRONMENT_GET_LINK_INTERFACE_FINAL, &link))
+         link_interface = &link;
+   }
+
    check_system_specs();
 }
 
 void retro_deinit(void)
 {
    size_t i;
+
+   // Before anything else goes away. An endpoint left on the bus would hold up
+   // whatever is cabled to it, with its peer parked in advance() for ever.
+   sio1NetlinkDetach();
+   link_attached = false;
 
    if (plugins_opened)
    {

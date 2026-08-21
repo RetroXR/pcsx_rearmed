@@ -452,7 +452,7 @@ OBJS += deps/libretro-common/streams/file_stream_transforms.o
 OBJS += deps/libretro-common/time/rtime.o
 CFLAGS += -DUSE_LIBRETRO_VFS
 endif
-OBJS += frontend/libretro.o
+OBJS += frontend/libretro.o frontend/sio1_netlink.o
 CFLAGS += -DHAVE_LIBRETRO
 INC_LIBRETRO_COMMON := 1
 

@@ -64,8 +64,13 @@
  *
  * The idle figure is separate and much coarser. Nothing is being carried, so
  * the only thing the rendezvous can discover is that a cable has just been
- * plugged in, and two milliseconds of emulated time is a fast enough answer to
- * a question a hand asked. */
+ * plugged in, or that the console on the other end has finally powered its port
+ * up, and two milliseconds of emulated time is a fast enough answer to either.
+ *
+ * Which of the two applies is not decided by the cable. A console with a lead in
+ * the socket and a single-player game running has BAUD at whatever it powered up
+ * as, and taking the fine grain from that would cost a hundred thousand
+ * rendezvous a second to carry nothing. */
 #define SIO1_GRAIN_MIN   256
 #define SIO1_GRAIN_MAX   (PSXCLK / 1000)
 #define SIO1_GRAIN_IDLE  (PSXCLK / 500)
@@ -141,10 +146,18 @@ static u32 sio1_cycles_per_byte(void) {
 	return sio1_cycles_per_bit() * bits;
 }
 
+/* Whether the guest has the port powered up at all. CTRL zero is a console that
+ * has not raised DTR, has not enabled the transmitter and has not enabled the
+ * receiver, so nothing it does can reach the wire and nothing on the wire is
+ * being listened for. */
+static int sio1_in_use(void) {
+	return sio1.ctrl != 0 || sio1.tx_active || sio1.rx_count != 0;
+}
+
 static u32 sio1_grain(void) {
 	u32 grain;
 
-	if (!sio1_connected())
+	if (!sio1_connected() || !sio1_in_use())
 		return SIO1_GRAIN_IDLE;
 
 	grain = sio1_cycles_per_byte() / 2;
