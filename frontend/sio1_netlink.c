@@ -65,7 +65,7 @@ struct nl_event {
 };
 
 static const struct retro_link_interface *nl_link;
-static retro_link_handle_t nl_handle;
+static retro_link_port_t *nl_handle;
 
 static int nl_attached;
 
