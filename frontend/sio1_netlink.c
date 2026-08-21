@@ -87,6 +87,14 @@ static uint64_t nl_now;
  * stamped before it, because peers have already been allowed to run there. */
 static uint64_t nl_safe;
 
+/* The last tick anything was stamped for.
+ *
+ * A byte originated while the rendezvous interval is coarse waits for the
+ * horizon; the next byte, sent once the interval has gone fine, would carry an
+ * EARLIER tick and overtake it. Bytes leave a serial port in the order they were
+ * written and arrive in that order, so a stamp never goes backwards. */
+static uint64_t nl_last_stamp;
+
 static u8 nl_lines;
 static int nl_lines_published;
 static u8 nl_peer_lines;
@@ -122,6 +130,9 @@ static void nl_send(uint64_t tick, u8 type, u8 value)
 		return;
 	if (tick < nl_safe)
 		tick = nl_safe;
+	if (tick < nl_last_stamp)
+		tick = nl_last_stamp;
+	nl_last_stamp = tick;
 
 	memset(msg, 0, sizeof(msg));
 	msg[0] = type;
@@ -389,6 +400,7 @@ void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port)
 	nl_safe = 0;
 	nl_pending_count = 0;
 	nl_next_seq = 0;
+	nl_last_stamp = 0;
 	nl_lines = 0;
 	nl_lines_published = 0;
 	nl_peer_lines = 0;

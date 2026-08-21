@@ -75,6 +75,22 @@
 #define SIO1_GRAIN_MAX   (PSXCLK / 1000)
 #define SIO1_GRAIN_IDLE  (PSXCLK / 500)
 
+/* What the port costs between transfers, as opposed to during one.
+ *
+ * A rendezvous is not work, it is a WAIT: two emulation threads take turns, and
+ * each turn costs a context switch whatever either of them had to say. At
+ * Formula 1's link rate a byte is 192 cycles, so a byte-sized interval is a
+ * hundred and seventy thousand of those a second and two consoles that were
+ * running at fifteen hundred frames a second ran at twelve.
+ *
+ * But that rate is what the port needs while a packet is CROSSING, and Formula
+ * 1 sends eight bytes every seven hundred milliseconds. So the fine interval is
+ * kept for a transfer and a short holdoff after it, and the rest of the time
+ * the two consoles meet two thousand times a second instead. The cost of that
+ * is a byte originated during a lull waiting for the horizon already promised,
+ * half a millisecond at worst, which no serial protocol notices. */
+#define SIO1_GRAIN_LULL  (PSXCLK / 2000)
+
 static const struct sio1_driver *sio1_drv;
 
 static struct {
@@ -99,6 +115,11 @@ static struct {
 
 	u8  tx_active;
 	u32 tx_end;
+
+	/* When the port last had a byte on it either way, so that the rendezvous
+	 * interval can follow the traffic rather than the baud rate alone. */
+	u32 last_active;
+	u8  ever_active;
 
 	u8  errors;   /* STAT bits 3..5, cleared by the acknowledge bit */
 	u8  irq;
@@ -163,11 +184,28 @@ static int sio1_in_use(void) {
 	return sio1.ctrl != 0 || sio1.tx_active || sio1.rx_count != 0;
 }
 
+/* Whether a byte is on the wire, or was recently enough that another is
+ * probably following it. A packet's bytes come one after another, so the
+ * holdoff only has to outlast the gap between them. */
+static int sio1_transferring(void) {
+	u32 cpb;
+
+	if (sio1.tx_active || sio1.tx_hold_full || sio1.rx_count != 0)
+		return 1;
+	if (!sio1.ever_active)
+		return 0;
+
+	cpb = sio1_cycles_per_byte();
+	return (u32)(psxRegs.cycle - sio1.last_active) < cpb * 16;
+}
+
 static u32 sio1_grain(void) {
 	u32 grain, cpb;
 
 	if (!sio1_connected() || !sio1_in_use())
 		return SIO1_GRAIN_IDLE;
+	if (!sio1_transferring())
+		return SIO1_GRAIN_LULL;
 
 	cpb = sio1_cycles_per_byte();
 	grain = cpb / 2;
@@ -190,6 +228,11 @@ static u32 sio1_grain(void) {
 	return grain;
 }
 
+static void sio1_mark_active(void) {
+	sio1.last_active = psxRegs.cycle;
+	sio1.ever_active = 1;
+}
+
 static u32 sio1_rx_threshold(void) {
 	return 1u << ((sio1.ctrl & SIO1_RX_IRQ_MODE) >> 8);
 }
@@ -209,6 +252,7 @@ static void sio1_tx_kick(void) {
 	}
 
 	cycles = sio1_cycles_per_byte();
+	sio1_mark_active();
 	sio1.tx_hold_full = 0;
 	sio1.tx_committed = 0;
 	sio1.tx_active = 1;
@@ -265,6 +309,7 @@ void sio1Receive(unsigned char data) {
 		return;
 	}
 
+	sio1_mark_active();
 	sio1.rx[(sio1.rx_head + sio1.rx_count) & (SIO1_FIFO_SIZE - 1)] = data;
 	sio1.rx_count++;
 
@@ -329,6 +374,9 @@ void sio1Update(void) {
 }
 
 void sio1Write8(unsigned char value) {
+	/* Before the byte can even start, so that the console is on the fine
+	 * interval by the time it is stamped rather than one rendezvous later. */
+	sio1_mark_active();
 	sio1.tx_hold = value;
 	sio1.tx_hold_full = 1;
 	if (sio1.ctrl & SIO1_TX_EN)
