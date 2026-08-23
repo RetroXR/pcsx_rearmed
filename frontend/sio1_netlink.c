@@ -45,9 +45,19 @@ enum {
  * makes the moment a peer's byte lands a function of emulated time alone, which
  * is what rollback and lockstep multiplayer need it to be.
  *
- * Deep enough that it cannot fill: a byte occupies the wire for far longer than
- * the horizon, so only a handful can ever be in flight at once. */
-#define NL_PENDING_MAX 64
+ * How deep is a question about the fastest link a game asks for, not about how
+ * many bytes look like a lot. A console announces a horizon and then runs to
+ * it, so everything it puts on the wire inside that window arrives here in one
+ * drain, and the count is the horizon divided by a byte's time. WipEout runs
+ * the port at 176 cycles a byte and starts its first burst out of a lull,
+ * whose horizon is PSXCLK/2000: ninety-six bytes into a queue sized by the
+ * belief that a byte occupies the wire for far longer than the horizon, which
+ * at that baud rate is the wrong way round.
+ *
+ * The depth is not what makes this safe, though, since a faster game would
+ * want a deeper one. What makes it safe is that a full queue stops taking
+ * messages off the bus instead of throwing them away -- see nl_drain. */
+#define NL_PENDING_MAX 256
 
 struct nl_event {
 	uint64_t tick;
@@ -299,10 +309,24 @@ static void nl_drain(void)
 	unsigned from;
 	size_t len = sizeof(msg);
 
-	while (nl_link->recv(nl_handle, &tick, &from, msg, &len)) {
+	/* Only while there is somewhere to put it.
+	 *
+	 * A message taken off the bus and then dropped is gone; one left on the bus
+	 * is still there at the next drain, and the bus holds it for as long as it
+	 * takes. So a full queue becomes back-pressure rather than loss, which is
+	 * the difference between a slow link and a broken one: the byte a game is
+	 * waiting for is exactly the byte it never gets, and what a player sees is
+	 * a handshake that completes and then goes nowhere.
+	 *
+	 * Nothing is held up by waiting. This console cannot fall more than its own
+	 * horizon behind the peer, and every byte released frees a slot, so a queue
+	 * that is full now is not full for long. */
+	while (nl_pending_count < NL_PENDING_MAX) {
+		len = sizeof(msg);
+		if (!nl_link->recv(nl_handle, &tick, &from, msg, &len))
+			break;
 		if (len == NL_MSG_SIZE && (msg[0] == NL_BYTE || msg[0] == NL_LINES))
 			nl_queue(tick, msg[0], msg[4], msg[5]);
-		len = sizeof(msg);
 	}
 }
 
