@@ -87,13 +87,22 @@ static uint64_t nl_now;
  * stamped before it, because peers have already been allowed to run there. */
 static uint64_t nl_safe;
 
-/* The last tick anything was stamped for.
+/* The last tick a BYTE was stamped for, and how long that byte occupied the
+ * wire.
  *
- * A byte originated while the rendezvous interval is coarse waits for the
- * horizon; the next byte, sent once the interval has gone fine, would carry an
- * EARLIER tick and overtake it. Bytes leave a serial port in the order they were
- * written and arrive in that order, so a stamp never goes backwards. */
+ * Two jobs, and the second one is the one a game notices. A byte originated
+ * while the rendezvous interval is coarse waits for the horizon already
+ * promised; the next byte, sent once the interval has gone fine, would carry an
+ * earlier tick and overtake it, so a stamp never goes backwards.
+ *
+ * But not going backwards is not enough. A console that starts a long transmit
+ * out of an idle port has its whole first burst clamped to that one horizon --
+ * eighty bytes landing on a single tick, into a FIFO eight deep, and the
+ * receiving game sees one byte and an overrun where a stream should have been.
+ * Bytes leave a serial port one byte-time apart and arrive that way, so a stamp
+ * is also never closer to the last one than the byte it carries is long. */
 static uint64_t nl_last_stamp;
+static u32 nl_last_span;
 
 static u8 nl_lines;
 static int nl_lines_published;
@@ -300,7 +309,15 @@ static void nl_drv_tx(unsigned char data, u32 cycles)
 	/* Stamped when the byte finishes arriving, not when it left. The receiving
 	 * console clocks it in over the same number of bit-times the sender clocks
 	 * it out, so that is the moment its own RX FIFO fills. */
-	nl_send(nl_clock() + cycles, NL_BYTE, data);
+	uint64_t land = nl_clock() + cycles;
+
+	/* And never less than a byte after the one before it, however far the
+	 * horizon pushed that one out. A wire carries one byte at a time. */
+	if (nl_last_span && land < nl_last_stamp + nl_last_span)
+		land = nl_last_stamp + nl_last_span;
+	nl_last_span = cycles;
+
+	nl_send(land, NL_BYTE, data);
 }
 
 static u32 nl_drv_poll(u32 grain, u32 horizon)
@@ -401,6 +418,7 @@ void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port)
 	nl_pending_count = 0;
 	nl_next_seq = 0;
 	nl_last_stamp = 0;
+	nl_last_span = 0;
 	nl_lines = 0;
 	nl_lines_published = 0;
 	nl_peer_lines = 0;
