@@ -340,6 +340,16 @@ static void sio1_port_reset(void) {
 	if (sio1_drv) {
 		if (sio1_drv->lines)
 			sio1_drv->lines(0, 0);
+		/* The memset above took DSR and CTS with it. Whoever is on the other
+		 * end has no idea that happened and has already said its piece, so
+		 * unless this console asks again those two levels stay low for the
+		 * rest of the session -- with a lead in the socket and a peer on the
+		 * bus. Which console it happens to is decided by nothing more than
+		 * whether the peer's announcement arrived before this reset or after,
+		 * so a pair switched on together survives it and a pair switched on a
+		 * few frames apart does not. */
+		if (sio1_drv->forget_peer)
+			sio1_drv->forget_peer();
 		sio1_schedule(SIO1_GRAIN_IDLE);
 	}
 }

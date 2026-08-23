@@ -70,6 +70,15 @@ struct sio1_driver {
 	 * total must not read that as elapsed time. */
 	void (*reanchor)(void);
 
+	/* Forget what the peer's lines were last known to be, and ask again.
+	 *
+	 * The port keeps DSR and CTS as levels, and a reset clears them along with
+	 * everything else. The driver holds the same levels, so after a reset the
+	 * two disagree: the guest reads DSR low while the driver still believes it
+	 * has been told, and a level nobody is going to repeat is a level that
+	 * never comes back. */
+	void (*forget_peer)(void);
+
 	/* Whether anything is actually cabled to this console. A driver may be
 	 * installed for a whole session with nothing on the other end. */
 	int (*connected)(void);

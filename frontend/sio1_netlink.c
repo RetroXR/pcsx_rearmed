@@ -62,6 +62,12 @@ struct nl_event {
 	uint64_t seq;
 	u8 type;
 	u8 value;
+	/* Set on a line announcement by a console that has not heard the other
+	 * one's lines yet, and cleared once it has. It is what lets a console ask
+	 * a second time: the answer to an announcement is one announcement back,
+	 * so without a way to say "I still cannot hear you" a console that lost
+	 * the reply has no way to ask for another and no reason to expect one. */
+	u8 want;
 };
 
 static const struct retro_link_interface *nl_link;
@@ -131,7 +137,7 @@ static uint64_t nl_clock(void)
 	return nl_now;
 }
 
-static void nl_send(uint64_t tick, u8 type, u8 value)
+static void nl_send(uint64_t tick, u8 type, u8 value, u8 want)
 {
 	u8 msg[NL_MSG_SIZE];
 
@@ -147,13 +153,14 @@ static void nl_send(uint64_t tick, u8 type, u8 value)
 	msg[0] = type;
 	msg[1] = (u8)nl_self_id;
 	msg[4] = value;
+	msg[5] = want;
 	nl_link->send(nl_handle, tick, RETRO_LINK_BROADCAST, msg, sizeof(msg));
 }
 
 static void nl_publish_lines(void)
 {
 	nl_lines_published = 1;
-	nl_send(nl_clock(), NL_LINES, nl_lines);
+	nl_send(nl_clock(), NL_LINES, nl_lines, (u8)!nl_peer_lines_seen);
 }
 
 static void nl_forget_peer(void)
@@ -207,7 +214,7 @@ static void nl_refresh_peers(void)
 	sio1SetPeerLines(0, 0);
 }
 
-static void nl_queue(uint64_t tick, u8 type, u8 value)
+static void nl_queue(uint64_t tick, u8 type, u8 value, u8 want)
 {
 	if (nl_pending_count >= NL_PENDING_MAX) {
 		SysPrintf("sio1: link backlog full, dropping\n");
@@ -217,6 +224,7 @@ static void nl_queue(uint64_t tick, u8 type, u8 value)
 	nl_pending[nl_pending_count].seq = nl_next_seq++;
 	nl_pending[nl_pending_count].type = type;
 	nl_pending[nl_pending_count].value = value;
+	nl_pending[nl_pending_count].want = want;
 	nl_pending_count++;
 }
 
@@ -227,19 +235,24 @@ static void nl_apply(const struct nl_event *ev)
 		sio1Receive(ev->value);
 		break;
 	case NL_LINES: {
-		int first = !nl_peer_lines_seen;
+		/* Answer if this console has not heard the peer before, or if the peer
+		 * says it has not heard this one. Hearing from the peer is proof that
+		 * it has a timeline for a message to be placed on, which is exactly
+		 * what an earlier announcement of ours may have lacked.
+		 *
+		 * Both conditions terminate: each console asks only while it is deaf,
+		 * and an answer carries the flag clear, so a pair settles after one
+		 * exchange instead of greeting each other for the rest of the session.
+		 * Answering only the FIRST one does not, and the difference is a
+		 * console booted second with the lead already in. */
+		int answer = !nl_peer_lines_seen || ev->want;
 
 		nl_peer_lines = ev->value;
 		nl_peer_lines_seen = 1;
 		/* Crossed: the peer's DTR arrives here as DSR, its RTS as CTS. */
 		sio1SetPeerLines(!!(nl_peer_lines & NL_DTR), !!(nl_peer_lines & NL_RTS));
 
-		/* Answer the first one, and only the first. Hearing from the peer is
-		 * proof that it has a timeline for a message to be placed on, which is
-		 * exactly what an earlier announcement of ours may have lacked.
-		 * Answering every one instead makes the two consoles greet each other
-		 * for the rest of the session. */
-		if (first)
+		if (answer)
 			nl_publish_lines();
 		break;
 	}
@@ -288,7 +301,7 @@ static void nl_drain(void)
 
 	while (nl_link->recv(nl_handle, &tick, &from, msg, &len)) {
 		if (len == NL_MSG_SIZE && (msg[0] == NL_BYTE || msg[0] == NL_LINES))
-			nl_queue(tick, msg[0], msg[4]);
+			nl_queue(tick, msg[0], msg[4], msg[5]);
 		len = sizeof(msg);
 	}
 }
@@ -317,7 +330,7 @@ static void nl_drv_tx(unsigned char data, u32 cycles)
 		land = nl_last_stamp + nl_last_span;
 	nl_last_span = cycles;
 
-	nl_send(land, NL_BYTE, data);
+	nl_send(land, NL_BYTE, data, 0);
 }
 
 static u32 nl_drv_poll(u32 grain, u32 horizon)
@@ -373,12 +386,32 @@ static void nl_drv_sync(void)
 	nl_release();
 }
 
+static void nl_drv_forget_peer(void)
+{
+	nl_peer_lines = 0;
+	nl_peer_lines_seen = 0;
+	nl_lines_published = 0;
+}
+
 static void nl_drv_reanchor(void)
 {
 	nl_have_raw = 0;
 	nl_pending_count = 0;
 	nl_lines_published = 0;
 	nl_peer_lines = 0;
+	/* And this console is deaf again, which is the whole point of saying so.
+	 *
+	 * The reset that follows memsets the port, so the peer's DSR and CTS go
+	 * with it. A console hears the other one's lines whenever the other one
+	 * happens to announce them, and if that lands before this console's own
+	 * port has been reset -- which is most of a boot, and certain for the
+	 * console switched on SECOND, whose peer is already up and announcing --
+	 * the level is wiped a moment later. Leaving this flag set meant the
+	 * console believed it had heard, so it never asked again and the peer had
+	 * no reason to repeat: DSR low for the rest of the session, with a lead in
+	 * the socket and two peers on the bus. Pulling the plug and putting it
+	 * back is what a player finds, because that clears the same flag. */
+	nl_peer_lines_seen = 0;
 }
 
 static int nl_drv_connected(void)
@@ -392,6 +425,7 @@ static const struct sio1_driver nl_driver = {
 	nl_drv_poll,
 	nl_drv_sync,
 	nl_drv_reanchor,
+	nl_drv_forget_peer,
 	nl_drv_connected,
 };
 
