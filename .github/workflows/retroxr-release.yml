@@ -114,7 +114,12 @@ jobs:
       # name the asset advertises and the installer expects.
       - name: Package
         run: |
-          mapfile -t hits < <(find . -path '*arm64-v8a*' -name 'libretro.so' -type f)
+          # libs/, not obj/. ndk-build leaves an unstripped copy in
+          # obj/local/<abi>/ and INSTALLS the deliverable to libs/<abi>/, so a
+          # search for the bare name finds two and the bigger one is the wrong
+          # one. The exactly-one check below is what turned that into a failed
+          # run rather than a core shipped with its debug info attached.
+          mapfile -t hits < <(find . -path '*/libs/arm64-v8a/*' -name 'libretro.so' -type f)
           if [ "${#hits[@]}" -ne 1 ]; then
             echo "expected exactly one arm64-v8a libretro.so, found ${#hits[@]}:"
             printf '  %s\n' "${hits[@]}"
