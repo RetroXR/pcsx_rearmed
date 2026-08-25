@@ -360,6 +360,7 @@ static void nl_drv_tx(unsigned char data, u32 cycles)
 static u32 nl_drv_poll(u32 grain, u32 horizon)
 {
 	uint64_t now, grant;
+	uint32_t wake_flags = RETRO_LINK_WAKE_NONE;
 
 	if (!nl_attached)
 		return grain;
@@ -376,7 +377,7 @@ static u32 nl_drv_poll(u32 grain, u32 horizon)
 	 * every console on it, and a message put on the wire between that moment
 	 * and this console's next rendezvous carries an offset from an origin that
 	 * has been thrown away. */
-	grant = nl_link->advance(nl_handle, now, nl_safe, now + grain);
+	grant = nl_link->advance(nl_handle, now, nl_safe, now + grain, &wake_flags);
 
 	nl_refresh_peers();
 
