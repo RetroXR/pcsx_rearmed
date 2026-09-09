@@ -2240,6 +2240,10 @@ unsigned retro_get_region(void)
    return is_pal_mode ? RETRO_REGION_PAL : RETRO_REGION_NTSC;
 }
 
+// Slot 2's card. Core-specific: libretro.h has one save-RAM id and a
+// PlayStation has two card slots.
+#define RETRO_MEMORY_PCSX_MEMCARD2 ((1 << 8) | RETRO_MEMORY_SAVE_RAM)
+
 void *retro_get_memory_data(unsigned id)
 {
    switch (id)
@@ -2249,6 +2253,11 @@ void *retro_get_memory_data(unsigned id)
    case RETRO_MEMORY_SAVE_RAM:
       if (memcard_type[0] == MEMCARDTYPE_LIBRETRO)
          return Mcd1Data;
+      break;
+   case RETRO_MEMORY_PCSX_MEMCARD2:
+      if (memcard_type[1] == MEMCARDTYPE_LIBRETRO)
+         return Mcd2Data;
+      break;
    }
    return NULL;
 }
@@ -2262,6 +2271,11 @@ size_t retro_get_memory_size(unsigned id)
    case RETRO_MEMORY_SAVE_RAM:
       if (memcard_type[0] == MEMCARDTYPE_LIBRETRO)
          return MCD_SIZE;
+      break;
+   case RETRO_MEMORY_PCSX_MEMCARD2:
+      if (memcard_type[1] == MEMCARDTYPE_LIBRETRO)
+         return MCD_SIZE;
+      break;
    }
    return 0;
 }

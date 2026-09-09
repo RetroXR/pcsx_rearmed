@@ -168,12 +168,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "pcsx_rearmed_memcard2",
-      "Memory Card 2 Type",
+      "Memory Card 2 Type (Restart)",
       NULL,
-      "Same as above, but card in slot 2.",
+      "Same as above, but card in slot 2. 'Libretro' passes this card's data to the frontend under a core-specific memory id.",
       NULL,
       "system",
       {
+         { "libretro", "Libretro" },
          { "serial", "Game Code (Serial)" },
          { "shared", "Shared Between All Games" },
          { "none", "No Memory Card" },
