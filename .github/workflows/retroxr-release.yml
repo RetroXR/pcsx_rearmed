@@ -166,6 +166,11 @@ jobs:
           1F801050h, which had never been emulated -- and speaks it over a link
           bus the frontend hosts, so two consoles in one room can be cabled
           together. With no bus the port answers exactly what it always did.
+
+          It also lets the frontend own the memory card in slot 2, as it could
+          already own slot 1's: pcsx_rearmed_memcard2 gains a 'libretro' value,
+          and that card is published under a core-specific memory id,
+          (1 << 8) | RETRO_MEMORY_SAVE_RAM. SAVE_RAM still means card 1.
           EOF
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" \
