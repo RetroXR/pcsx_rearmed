@@ -1,5 +1,5 @@
-# Build the retroXR pcsx_rearmed core for Windows and Android and publish it as
-# a release, so retroXR's CoreDownloadManager can fetch it.
+# Build the retroXR pcsx_rearmed core for Windows, Android, Linux and macOS and
+# publish it as a release, so retroXR's CoreDownloadManager can fetch it.
 #
 # This fork carries the PlayStation link cable. SIO1 -- the serial port at
 # 1F801050h -- had never been emulated at all: sio1ReadStat16 returned a bare
@@ -10,8 +10,19 @@
 # existing session sees and what stops Armored Core and F1 misdetecting a cable.
 # pcsx_rearmed_link_cable is on by default and is not restart-time.
 #
+# A load puts the machine back exactly -- the serial port and its link driver
+# are in the state -- so netplay can roll a cabled pair back as one group, and
+# pcsx_rearmed_netplay_deterministic pins every host-scheduled thread off.
+#
 #   Windows  pcsx_rearmed_libretro.dll.zip          containing pcsx_rearmed_libretro.dll
 #   Android  pcsx_rearmed_libretro_android.so.zip   containing pcsx_rearmed_libretro_android.so
+#   Linux    pcsx_rearmed_libretro.so.zip           containing pcsx_rearmed_libretro.so
+#   macOS    pcsx_rearmed_libretro_arm64.dylib.zip
+#            pcsx_rearmed_libretro_x86_64.dylib.zip
+#              each containing pcsx_rearmed_libretro.dylib
+#
+# The macOS builds are interpreter-only: Makefile.libretro's osx branch sets
+# DYNAREC := 0, as libretro's own buildbot does.
 #
 # Windows is cross-compiled from Ubuntu with mingw-w64. platform=win is passed
 # explicitly and is the single most important line here: Makefile.libretro picks
@@ -137,9 +148,101 @@ jobs:
           path: pcsx_rearmed_libretro_android.so.zip
           if-no-files-found: error
 
+  # The oldest Ubuntu runner: a shared library loads only against a glibc at
+  # least as new as the one it was linked with.
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make zip zlib1g-dev
+
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Build
+        run: make -f Makefile.libretro platform=unix -j$(nproc)
+
+      - name: Package
+        run: |
+          mapfile -t hits < <(find . -maxdepth 2 -name 'pcsx_rearmed_libretro.so' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one pcsx_rearmed_libretro.so, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "${hits[0]}" stage/pcsx_rearmed_libretro.so
+          (cd stage && zip -q -X ../pcsx_rearmed_libretro.so.zip pcsx_rearmed_libretro.so)
+          file stage/pcsx_rearmed_libretro.so
+          ls -lh pcsx_rearmed_libretro.so.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: pcsx_rearmed_libretro.so.zip
+          if-no-files-found: error
+
+  # Both architectures on one Apple Silicon runner, with the flags libretro's
+  # own osx-arm64 CI template passes: the osx branch of the makefile only
+  # applies a target triple and SDK when CROSS_COMPILE=1. The triple also
+  # reaches ARCH_DETECTED, which asks `$(CC) -dumpmachine $(CFLAGS)`, so the
+  # x86_64 leg does not pick up the arm64 NEON renderer from the host.
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            triple: arm64-apple-macos10.15
+          - arch: x86_64
+            triple: x86_64-apple-macos10.13
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Build
+        run: |
+          make -f Makefile.libretro platform=osx CC=clang CXX=clang++ CROSS_COMPILE=1 \
+            LIBRETRO_APPLE_PLATFORM=${{ matrix.triple }} \
+            LIBRETRO_APPLE_ISYSROOT="$(xcrun --sdk macosx --show-sdk-path)" \
+            -j$(sysctl -n hw.ncpu)
+
+      - name: Package
+        run: |
+          mapfile -t hits < <(find . -maxdepth 2 -name 'pcsx_rearmed_libretro.dylib' -type f)
+          if [ "${#hits[@]}" -ne 1 ]; then
+            echo "expected exactly one pcsx_rearmed_libretro.dylib, found ${#hits[@]}:"
+            printf '  %s\n' "${hits[@]}"
+            exit 1
+          fi
+          lib="${hits[0]}"
+          lipo -info "$lib"
+          if [ "$(lipo -archs "$lib")" != "${{ matrix.arch }}" ]; then
+            echo "$lib is not ${{ matrix.arch }}"
+            exit 1
+          fi
+          mkdir -p stage
+          cp "$lib" stage/pcsx_rearmed_libretro.dylib
+          (cd stage && zip -q -X ../pcsx_rearmed_libretro_${{ matrix.arch }}.dylib.zip pcsx_rearmed_libretro.dylib)
+          ls -lh pcsx_rearmed_libretro_${{ matrix.arch }}.dylib.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: pcsx_rearmed_libretro_${{ matrix.arch }}.dylib.zip
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [windows, android]
+    needs: [windows, android, linux, macos]
     if: github.event_name == 'push' || github.event.inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
@@ -159,8 +262,9 @@ jobs:
           cat > notes.md <<EOF
           pcsx_rearmed libretro core built for retroXR, from \`$GITHUB_SHA\`.
 
-          Windows x86_64 and Android arm64-v8a. The source for these binaries is
-          this tag.
+          Windows x86_64, Android arm64-v8a, Linux x86_64 and macOS arm64 and
+          x86_64 (interpreter only, as on libretro's buildbot). The source for
+          these binaries is this tag.
 
           Over the stock buildbot build this emulates SIO1, the serial port at
           1F801050h, which had never been emulated -- and speaks it over a link
@@ -171,6 +275,18 @@ jobs:
           already own slot 1's: pcsx_rearmed_memcard2 gains a 'libretro' value,
           and that card is published under a core-specific memory id,
           (1 << 8) | RETRO_MEMORY_SAVE_RAM. SAVE_RAM still means card 1.
+
+          A savestate load now puts the machine back exactly, which rollback
+          netplay depends on: the serial port and its link driver are in the
+          state, and root counters, MDEC, the CD FIFO, the SPU and the GPU
+          (write cache, VRAM transfer, GPUREAD latch) no longer drift on load.
+          With pcsx_rearmed_link_frame_edges every frame edge is one instant
+          on the wire, so two cabled consoles roll back as one group.
+
+          pcsx_rearmed_netplay_deterministic (off by default) turns off
+          everything that runs on its own host thread -- the threaded GPU and
+          SPU, the dynarec's compile thread and CD read-ahead -- so peers and
+          replays take every event on the same cycle.
           EOF
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" \
@@ -181,4 +297,7 @@ jobs:
           gh release upload "$TAG" \
             dist/pcsx_rearmed_libretro.dll.zip \
             dist/pcsx_rearmed_libretro_android.so.zip \
+            dist/pcsx_rearmed_libretro.so.zip \
+            dist/pcsx_rearmed_libretro_arm64.dylib.zip \
+            dist/pcsx_rearmed_libretro_x86_64.dylib.zip \
             --repo "$GITHUB_REPOSITORY" --clobber
