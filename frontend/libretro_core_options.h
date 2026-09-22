@@ -225,6 +225,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled",
    },
    {
+      "pcsx_rearmed_netplay_deterministic",
+      "Netplay Determinism",
+      NULL,
+      "Switch off everything that runs on a thread of its own -- threaded GPU and SPU, the dynarec's compile thread, CD read-ahead -- whichever of them this build has. Their results land at a moment the host picks, which two netplay peers, or a rollback and the frames it repeats, cannot agree on. A frontend running a netplay session pins it on.",
+      NULL,
+      "system",
+      {
+         { "disabled", "disabled" },
+         { "enabled",  "enabled" },
+         { NULL, NULL },
+      },
+      "disabled",
+   },
+   {
       "pcsx_rearmed_link_frame_edges",
       "Link Cable Frame Edges",
       NULL,

@@ -2317,6 +2317,15 @@ static float GunconAdjustRatioY = 1;
 
 static void update_variables(bool in_flight)
 {
+   /* Everything that runs on a thread of its own and hands results back at a
+    * moment the host scheduler picks: the GPU and SPU workers, the dynarec's
+    * compile thread and CD read-ahead. Each is harmless to a single player
+    * and fatal to netplay, where two peers -- or a rollback and the run it
+    * repeats -- must take every event on the same cycle. Measured on a Quest:
+    * two identical lockstep runs of WipEout parted at frame 120 with these on
+    * their defaults. One switch, declared on every build whichever of the
+    * four that build has, so a frontend can pin it without knowing. */
+   int np_det = get_bool_variable("pcsx_rearmed_netplay_deterministic");
    struct retro_variable var;
 #ifdef GPU_PEOPS
    // Always enable GPU_PEOPS_OLD_FRAME_SKIP flag
@@ -2551,6 +2560,8 @@ static void update_variables(bool in_flight)
    {
       cdra_set_buf_count(strtol(var.value, NULL, 10));
    }
+   if (np_det)
+      cdra_set_buf_count(0);
 #endif
 
    //
@@ -2609,6 +2620,10 @@ static void update_variables(bool in_flight)
       else if (strcmp(var.value, "enabled") == 0)
          ndrc_g.hacks |= NDHACK_THREAD_FORCE | NDHACK_THREAD_FORCE_ON;
       // psxCpu->ApplyConfig(); will start/stop the thread
+   }
+   if (np_det) {
+      ndrc_g.hacks &= ~(NDHACK_THREAD_FORCE | NDHACK_THREAD_FORCE_ON);
+      ndrc_g.hacks |= NDHACK_THREAD_FORCE;
    }
 #endif
 
@@ -2725,6 +2740,11 @@ static void update_variables(bool in_flight)
       else
          spu_config.iUseThread = 0;
       if (spu_config.iUseThread != spu_thread_old && SPU_configure)
+         SPU_configure();
+   }
+   if (np_det && spu_config.iUseThread) {
+      spu_config.iUseThread = 0;
+      if (SPU_configure)
          SPU_configure();
    }
 #endif
@@ -2856,6 +2876,8 @@ static void update_variables(bool in_flight)
       else
          pl_rearmed_cbs.thread_rendering = -1; // auto
    }
+   if (np_det)
+      pl_rearmed_cbs.thread_rendering = 0;
 #endif
 
 #ifdef GPU_PEOPS
