@@ -217,7 +217,7 @@ jobs:
 
       - name: Package
         run: |
-          mapfile -t hits < <(find . -maxdepth 2 -name 'pcsx_rearmed_libretro.dylib' -type f)
+          hits=(); while IFS= read -r f; do hits+=("$f"); done < <(find . -maxdepth 2 -name 'pcsx_rearmed_libretro.dylib' -type f)
           if [ "${#hits[@]}" -ne 1 ]; then
             echo "expected exactly one pcsx_rearmed_libretro.dylib, found ${#hits[@]}:"
             printf '  %s\n' "${hits[@]}"
