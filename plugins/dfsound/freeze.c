@@ -133,6 +133,10 @@ typedef struct
  uint32_t   last_keyon_cycles;
  uint32_t   rvb_sb[2][4];
  int32_t    interpolation; // which interpolation's data is in SPUCHAN_orig::SB
+ // How many more silent samples the CD capture buffers are owed. Those buffers
+ // are SPU RAM a game can read and put an IRQ on, so a load resetting this to
+ // a full 512 wrote silence there that the original run never wrote.
+ int32_t    cd_clear_samples;
 
 } SPUOSSFreeze_t;
 
@@ -326,6 +330,7 @@ long DoFreeze(int ulFreezeMode, struct SPUFreeze * pF, unsigned short **ram,
    for (i = 0; i < 2; i++)
     memcpy(&pFO->rvb_sb[i], sb_rvb->sample[i], sizeof(pFO->rvb_sb[i]));
    pFO->interpolation = spu.interpolation;
+   pFO->cd_clear_samples = spu.cdClearSamples;
 
    for(i=0;i<MAXCHAN;i++)
     {
@@ -391,6 +396,9 @@ long DoFreeze(int ulFreezeMode, struct SPUFreeze * pF, unsigned short **ram,
     memcpy(&sb_rvb->sample[i][j*4], pFO->rvb_sb[i], 4 * sizeof(sb_rvb->sample[i][0]));
   spu.interpolation = pFO->interpolation;
  }
+ if (pFO && pF->Size >= ossOffset + offsetof(SPUOSSFreeze_t, cd_clear_samples)
+     + sizeof(pFO->cd_clear_samples))
+  spu.cdClearSamples = pFO->cd_clear_samples;
  for (i = 0; i <= 2; i += 2)
   if (!regAreaGet(H_SPUcmvolL+i) && regAreaGet(H_SPUmvolL+i) < 0x8000u)
    regAreaRef(H_SPUcmvolL+i) = regAreaGet(H_SPUmvolL+i) << 1;

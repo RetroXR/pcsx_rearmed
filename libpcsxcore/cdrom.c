@@ -1807,7 +1807,7 @@ int cdrFreeze(void *f, int Mode) {
 	u32 tmp;
 	u8 tmpp[3];
 
-	cdr.freeze_ver = 0x63647203;
+	cdr.freeze_ver = 0x63647204;
 	gzfreeze(&cdr, sizeof(cdr));
 	
 	if (Mode == 1) {
@@ -1822,7 +1822,10 @@ int cdrFreeze(void *f, int Mode) {
 		getCdInfo();
 
 		cdr.FifoOffset = tmp < DATA_SIZE ? tmp : DATA_SIZE;
-		cdr.FifoSize = (cdr.Mode & MODE_SIZE_2340) ? 2340 : 2048 + 12;
+		// Saved since 0x63647204. Deriving it from Mode gave a state taken
+		// before the first sector a size it never had.
+		if (cdr.freeze_ver < 0x63647204 || cdr.FifoSize > DATA_SIZE)
+			cdr.FifoSize = (cdr.Mode & MODE_SIZE_2340) ? 2340 : 2048 + 12;
 		if (cdr.SubqForwardSectors > SUBQ_FORWARD_SECTORS)
 			cdr.SubqForwardSectors = SUBQ_FORWARD_SECTORS;
 

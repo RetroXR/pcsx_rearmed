@@ -697,6 +697,7 @@ struct PcsxSaveFuncs SaveFuncs = {
 static const char PcsxHeader[32] = "STv4 PCSXra " REV;
 
 // Savestate Versioning!
+
 // If you make changes to the savestate version, please increment the value below.
 static const u32 SaveVersion = 0x8b410006;
 
@@ -724,6 +725,9 @@ struct misc_save_data {
 	u32 frame_counter;
 	int CdromFrontendId;
 	u32 save_counter;
+	// The interpreter's fraction of a cycle. Zero in states from before it was
+	// kept, which is what a load always set it to.
+	u32 subCycle;
 };
 
 #define EX_SCREENPIC_SIZE (128 * 96 * 3)
@@ -761,6 +765,7 @@ int SaveState(const char *file) {
 	misc->frame_counter = frame_counter;
 	misc->CdromFrontendId = CdromFrontendId;
 	misc->save_counter = ++save_counter;
+	misc->subCycle = psxRegs.subCycle;
 
 	psxCpu->Notify(R3000ACPU_NOTIFY_BEFORE_SAVE, NULL);
 
@@ -818,6 +823,7 @@ int SaveState(const char *file) {
 	mdecFreeze(f, 1);
 	ndrc_freeze(f, 1);
 	padFreeze(f, 1);
+	sio1Freeze(f, 1);
 
 	memset(misc, 0, sizeof(*misc));
 	SaveFuncs.close(f);
@@ -827,6 +833,7 @@ int SaveState(const char *file) {
 int LoadState(const char *file) {
 	struct misc_save_data *misc = (void *)(psxRegs.ptrs.psxH + 0xf000);
 	u32 biosBranchCheckOld = psxRegs.biosBranchCheck;
+	u32 sub_cycle = 0;
 	union {
 		// save stack space
 		GPUFreeze_t gpu_hdr;
@@ -900,6 +907,7 @@ int LoadState(const char *file) {
 		CdromFrontendId = misc->CdromFrontendId;
 		if (misc->save_counter)
 			save_counter = misc->save_counter;
+		sub_cycle = misc->subCycle;
 	}
 
 	if (Config.HLE)
@@ -944,19 +952,19 @@ int LoadState(const char *file) {
 	ndrc_freeze(f, 0);
 	padFreeze(f, 0);
 
-	// The serial port is not in the savestate. What it holds is one end of a
-	// live cable -- bytes part way down the wire, and a peer console that was
-	// never asked to rewind -- so there is nothing here that would still be
-	// true after a load. Start it clean instead, which also re-anchors the
-	// link driver's timeline: psxRegs.cycle has just moved by an arbitrary
-	// amount, including backwards.
-	sio1Reset();
+	// The serial port, and the link driver's half of the cable. A state written
+	// before the port was saved has nothing here, and gets the clean port a
+	// load always used to give it.
+	if (!sio1Freeze(f, 0))
+		sio1Reset();
 
 	events_restore();
 	if (Config.HLE)
 		psxBiosCheckExe(biosBranchCheckOld, 0x60, 1);
 
 	psxCpu->Notify(R3000ACPU_NOTIFY_AFTER_LOAD_STATE, NULL);
+	// After the notify, which zeroes it.
+	psxRegs.subCycle = sub_cycle;
 
 	result = 0;
 cleanup:

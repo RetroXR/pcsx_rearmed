@@ -723,8 +723,10 @@ int mdecFreeze(void *f, int Mode) {
 		v = mdec.block_buffer_pos - mdec.block_buffer;
 	gzfreeze(&v, sizeof(v));
 	mdec.block_buffer_pos = 0;
+	// Where in the buffer, not just whether: resuming a macroblock from its
+	// start after a load decoded part of it twice, mid-FMV.
 	if (v && v < sizeof(mdec.block_buffer))
-		mdec.block_buffer_pos = mdec.block_buffer;
+		mdec.block_buffer_pos = mdec.block_buffer + v;
 
 	gzfreeze(&mdec.block_buffer, sizeof(mdec.block_buffer));
 	gzfreeze(&mdec.pending_dma1, sizeof(mdec.pending_dma1));

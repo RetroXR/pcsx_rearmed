@@ -17,7 +17,11 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02111-1307 USA.           *
  ***************************************************************************/
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "sio1.h"
+#include "misc.h"
 #include "psxhw.h"
 #include "psxevents.h"
 
@@ -361,6 +365,89 @@ void sio1Reset(void) {
 	if (sio1_drv && sio1_drv->reanchor)
 		sio1_drv->reanchor();
 	sio1_port_reset();
+}
+
+/* The port in the savestate.
+ *
+ * It was left out once, on the grounds that a live cable cannot be rewound, and
+ * a load reset the port instead. That reset is what broke every load, cable or
+ * no cable: the link driver is installed whenever the option is on, so the
+ * reset re-armed PSXINT_SIO1 from the cycle of the LOAD rather than the one the
+ * state was taken at, and the event scheduler after a load was not the one the
+ * state described. Interrupts were then taken a few cycles off and the replay
+ * wandered from the original within a few frames -- which is exactly what
+ * rollback cannot survive, since it loads a state every time it mispredicts.
+ *
+ * And the premise was wrong too. Nothing asks one console to rewind while the
+ * other carries on: a rollback over a cabled pair rewinds both of them and the
+ * bus between, to the same frame, so the port's bytes part way down the wire
+ * are exactly what has to come back.
+ *
+ * The event itself needs nothing here. Its slot in intCycle is part of
+ * psxRegisters and comes back with the rest of it; the only thing to square is
+ * whether there is a driver NOW to answer it. */
+#define SIO1_FREEZE_MAGIC   0x314f4953 /* "SIO1" */
+#define SIO1_FREEZE_VERSION 1
+
+int sio1Freeze(void *f, int mode) {
+	u32 magic = SIO1_FREEZE_MAGIC, version = SIO1_FREEZE_VERSION;
+	u32 port_size = sizeof(sio1), drv_size = 0;
+	void *blob = NULL;
+
+	if (mode) {
+		if (sio1_drv && sio1_drv->state_size && sio1_drv->save)
+			drv_size = sio1_drv->state_size();
+		SaveFuncs.write(f, &magic, sizeof(magic));
+		SaveFuncs.write(f, &version, sizeof(version));
+		SaveFuncs.write(f, &port_size, sizeof(port_size));
+		SaveFuncs.write(f, &sio1, sizeof(sio1));
+		SaveFuncs.write(f, &drv_size, sizeof(drv_size));
+		if (drv_size && (blob = calloc(1, drv_size))) {
+			sio1_drv->save(blob);
+			SaveFuncs.write(f, blob, drv_size);
+			free(blob);
+		}
+		else if (drv_size) {
+			/* Out of memory: say there is nothing, rather than a size with no
+			 * bytes behind it. The seek back is the length field just written. */
+			drv_size = 0;
+			SaveFuncs.seek(f, -(long)sizeof(drv_size), SEEK_CUR);
+			SaveFuncs.write(f, &drv_size, sizeof(drv_size));
+		}
+		return 1;
+	}
+
+	SaveFuncs.read(f, &magic, sizeof(magic));
+	SaveFuncs.read(f, &version, sizeof(version));
+	SaveFuncs.read(f, &port_size, sizeof(port_size));
+	if (magic != SIO1_FREEZE_MAGIC || version != SIO1_FREEZE_VERSION ||
+	    port_size != sizeof(sio1))
+		return 0;
+
+	SaveFuncs.read(f, &sio1, sizeof(sio1));
+	SaveFuncs.read(f, &drv_size, sizeof(drv_size));
+
+	if (drv_size && drv_size <= 1024 * 1024 && (blob = malloc(drv_size))) {
+		SaveFuncs.read(f, blob, drv_size);
+		if (!sio1_drv || !sio1_drv->load || !sio1_drv->load(blob, drv_size)) {
+			if (sio1_drv && sio1_drv->reanchor)
+				sio1_drv->reanchor();
+		}
+		free(blob);
+	}
+	else {
+		if (drv_size)
+			SaveFuncs.seek(f, drv_size, SEEK_CUR);
+		/* Saved with no driver (the cable option was off), loaded with one. */
+		if (sio1_drv && sio1_drv->reanchor)
+			sio1_drv->reanchor();
+	}
+
+	if (!sio1_drv)
+		psxRegs.interrupt &= ~(1 << PSXINT_SIO1);
+	else if (!(psxRegs.interrupt & (1 << PSXINT_SIO1)))
+		sio1_schedule(SIO1_GRAIN_IDLE);
+	return 1;
 }
 
 void sio1Update(void) {

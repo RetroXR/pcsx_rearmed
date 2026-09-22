@@ -82,6 +82,15 @@ struct sio1_driver {
 	/* Whether anything is actually cabled to this console. A driver may be
 	 * installed for a whole session with nothing on the other end. */
 	int (*connected)(void);
+
+	/* The driver's half of a savestate: its clock, its horizon and whatever it
+	 * has taken off the wire and not yet handed over. `state_size` is fixed for
+	 * a build, `save` fills exactly that many bytes, and `load` is handed what
+	 * a save wrote and returns non-zero if it could use it. Optional; a driver
+	 * without them is reanchored on a load, as before these existed. */
+	u32 (*state_size)(void);
+	void (*save)(void *buf);
+	int (*load)(const void *buf, u32 size);
 };
 
 void sio1SetDriver(const struct sio1_driver *drv);
@@ -92,6 +101,11 @@ void sio1SetPeerLines(int dsr, int cts);
 
 void sio1Reset(void);
 void sio1Update(void);
+
+/* Save (mode 1) or load (mode 0) the port through SaveFuncs. A load returns
+ * zero if the state carries no port -- one written before the port was in the
+ * savestate -- and the caller then resets it instead. */
+int sio1Freeze(void *f, int mode);
 
 void sio1Write8(unsigned char value);
 void sio1WriteStat16(unsigned short value);

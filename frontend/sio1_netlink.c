@@ -444,6 +444,122 @@ static int nl_drv_connected(void)
 	return nl_peers >= 2;
 }
 
+/* This end of the cable, in a savestate.
+ *
+ * A rollback over a cabled pair rewinds both consoles AND the bus between them
+ * to one frame, and the bus's half -- what it has not delivered yet, and where
+ * each end stood -- is the frontend's to put back. This is the rest: what this
+ * console has already taken off the wire but not yet let land, the clock the
+ * stamps are measured on, and the horizon it has promised. Leave any of it out
+ * and the replay lands a byte at a different cycle than the first run did.
+ *
+ * The clock comes back verbatim, which can be BEHIND what the bus last heard
+ * from this console: a state loaded by hand on one console of a cabled pair.
+ * The bus notices that and re-aligns the wire the way it does when a cable is
+ * seated, so it is not this driver's job to hide it.
+ *
+ * Fixed-width fields in a zeroed struct, so that two saves of the same moment
+ * are the same bytes. The handle and the attachment are not saved: they are the
+ * frontend's live objects, not state. */
+#define NL_STATE_MAGIC   0x4b4e4c4e /* "NLNK" */
+#define NL_STATE_VERSION 1
+
+struct nl_saved_event {
+	uint64_t tick;
+	uint64_t seq;
+	u8 type, value, want, pad[5];
+};
+
+struct nl_state {
+	u32 magic;
+	u32 version;
+	uint64_t now;
+	uint64_t safe;
+	uint64_t last_stamp;
+	uint64_t next_seq;
+	u32 last_raw;
+	u32 last_span;
+	u32 peers;
+	s32 self_id;
+	u32 pending_count;
+	u8 have_raw;
+	u8 lines;
+	u8 lines_published;
+	u8 peer_lines;
+	u8 peer_lines_seen;
+	u8 pad[7];
+	struct nl_saved_event pending[NL_PENDING_MAX];
+};
+
+static u32 nl_drv_state_size(void)
+{
+	return sizeof(struct nl_state);
+}
+
+static void nl_drv_save(void *buf)
+{
+	struct nl_state *st = buf;
+	unsigned i;
+
+	memset(st, 0, sizeof(*st));
+	st->magic = NL_STATE_MAGIC;
+	st->version = NL_STATE_VERSION;
+	st->now = nl_now;
+	st->safe = nl_safe;
+	st->last_stamp = nl_last_stamp;
+	st->next_seq = nl_next_seq;
+	st->last_raw = nl_last_raw;
+	st->last_span = nl_last_span;
+	st->peers = nl_peers;
+	st->self_id = nl_self_id;
+	st->pending_count = nl_pending_count;
+	st->have_raw = (u8)nl_have_raw;
+	st->lines = nl_lines;
+	st->lines_published = (u8)nl_lines_published;
+	st->peer_lines = nl_peer_lines;
+	st->peer_lines_seen = (u8)nl_peer_lines_seen;
+	for (i = 0; i < nl_pending_count; i++) {
+		st->pending[i].tick = nl_pending[i].tick;
+		st->pending[i].seq = nl_pending[i].seq;
+		st->pending[i].type = nl_pending[i].type;
+		st->pending[i].value = nl_pending[i].value;
+		st->pending[i].want = nl_pending[i].want;
+	}
+}
+
+static int nl_drv_load(const void *buf, u32 size)
+{
+	const struct nl_state *st = buf;
+	unsigned i;
+
+	if (size != sizeof(*st) || st->magic != NL_STATE_MAGIC ||
+	    st->version != NL_STATE_VERSION || st->pending_count > NL_PENDING_MAX)
+		return 0;
+
+	nl_now = st->now;
+	nl_safe = st->safe;
+	nl_last_stamp = st->last_stamp;
+	nl_next_seq = st->next_seq;
+	nl_last_raw = st->last_raw;
+	nl_last_span = st->last_span;
+	nl_peers = st->peers;
+	nl_self_id = st->self_id;
+	nl_have_raw = st->have_raw;
+	nl_lines = st->lines;
+	nl_lines_published = st->lines_published;
+	nl_peer_lines = st->peer_lines;
+	nl_peer_lines_seen = st->peer_lines_seen;
+	nl_pending_count = st->pending_count;
+	for (i = 0; i < nl_pending_count; i++) {
+		nl_pending[i].tick = st->pending[i].tick;
+		nl_pending[i].seq = st->pending[i].seq;
+		nl_pending[i].type = st->pending[i].type;
+		nl_pending[i].value = st->pending[i].value;
+		nl_pending[i].want = st->pending[i].want;
+	}
+	return 1;
+}
+
 static const struct sio1_driver nl_driver = {
 	nl_drv_lines,
 	nl_drv_tx,
@@ -452,6 +568,9 @@ static const struct sio1_driver nl_driver = {
 	nl_drv_reanchor,
 	nl_drv_forget_peer,
 	nl_drv_connected,
+	nl_drv_state_size,
+	nl_drv_save,
+	nl_drv_load,
 };
 
 /* ── attach and detach ────────────────────────────────────────────────────── */

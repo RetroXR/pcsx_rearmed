@@ -605,7 +605,17 @@ s32 psxRcntFreeze( void *f, s32 Mode )
             _psxRcntWmode( i, rcnts[i].mode );
             count = (psxRegs.cycle - rcnts[i].cycleStart) / rcnts[i].rate;
             if (count > 0x1000)
+            {
+                // Rebuilding cycleStart from a whole count throws away how far
+                // into the current tick the counter was -- up to a scanline for
+                // counter 1 on hsync -- so the next increment came early and a
+                // loaded state no longer ran the way it did when it was saved.
+                // Put the part-tick back; a state that was already sane then
+                // comes out with exactly the cycleStart it went in with.
+                u32 rem = (psxRegs.cycle - rcnts[i].cycleStart) % rcnts[i].rate;
                 _psxRcntWcount( i, count & 0xffff );
+                rcnts[i].cycleStart -= rem;
+            }
         }
         scheduleRcntBase();
         psxRcntSet();
