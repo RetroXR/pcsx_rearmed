@@ -588,6 +588,12 @@ static noinline void start_vram_transfer(struct psx_gpu *gpu, uint32_t pos_word,
 
   if (is_read) {
     const uint16_t *mem = VRAM_MEM_XY(gpu->vram, gpu->dma.x, gpu->dma.y);
+    // The first word is latched now, so what is queued has to be drawn first.
+    // Leaving it to "the actual transfer" made the value depend on whether the
+    // renderer happened to have flushed, which a savestate cannot reproduce:
+    // a save flushes, a load starts with nothing queued, and a replay read
+    // pixels the original run had not drawn yet (WipEout, via GPUREAD).
+    sync_renderer(gpu);
     gpu->status |= PSX_GPU_STATUS_IMG;
     // XXX: wrong for width 1
     gpu->gp0 = LE16TOH(mem[0]) | ((uint32_t)LE16TOH(mem[1]) << 16);
@@ -1080,6 +1086,36 @@ uint32_t GPUreadStatus(void)
   return ret;
 }
 
+/* gpulib's own bookkeeping that decides what the NEXT command does, in
+ * ulControl slots nothing else uses. Without it a load replayed GP1(05), which
+ * stamped the load's frame into last_flip_frame, so the game's next display
+ * flip took the other branch of the "same address, new frame" test; and a VRAM
+ * transfer in flight across a frame edge lost its position, and GPUREAD's latch
+ * (gp0) kept whatever the process last read rather than what the state had.
+ * Any one of them sent a
+ * replay somewhere the original run never went. A state without the magic
+ * loads as it always did. */
+#define GPULIB_FREEZE_MAGIC 0x6c627067 /* "gpbl" */
+enum { GF_MAGIC = 0xf0, GF_FLIP, GF_FLAGS, GF_DMA, GF_DMA_START = GF_DMA + 3, GF_GP0 = GF_DMA_START + 3 };
+
+static void freeze_dma(uint32_t *d, const void *src)
+{
+  const int *p = src;   /* x, y, w, h, then offset and is_read packed */
+  const short *q = (const short *)(p + 4);
+  d[0] = (p[0] & 0xffff) | (p[1] << 16);
+  d[1] = (p[2] & 0xffff) | (p[3] << 16);
+  d[2] = (uint16_t)q[0] | ((uint32_t)(uint16_t)q[1] << 16);
+}
+
+static void thaw_dma(void *dst, const uint32_t *d)
+{
+  int *p = dst;
+  short *q = (short *)(p + 4);
+  p[0] = (int16_t)(d[0] & 0xffff); p[1] = (int16_t)(d[0] >> 16);
+  p[2] = (int16_t)(d[1] & 0xffff); p[3] = (int16_t)(d[1] >> 16);
+  q[0] = (short)(d[2] & 0xffff);   q[1] = (short)(d[2] >> 16);
+}
+
 long GPUfreeze(uint32_t type, GPUFreeze_t *freeze, uint16_t **vram_ptr)
 {
   int i;
@@ -1095,6 +1131,14 @@ long GPUfreeze(uint32_t type, GPUFreeze_t *freeze, uint16_t **vram_ptr)
       memcpy(freeze->ulControl, gpu.regs, sizeof(gpu.regs));
       memcpy(freeze->ulControl + 0xe0, gpu.ex_regs, sizeof(gpu.ex_regs));
       freeze->ulStatus = gpu.status;
+      freeze->ulControl[GF_MAGIC] = GPULIB_FREEZE_MAGIC;
+      freeze->ulControl[GF_FLIP] = gpu.frameskip.last_flip_frame;
+      freeze->ulControl[GF_FLAGS] = gpu.state.fb_dirty
+        | (gpu.state.fb_dirty_display_area << 1)
+        | (gpu.state.draw_display_intersect << 2);
+      freeze_dma(freeze->ulControl + GF_DMA, &gpu.dma);
+      freeze_dma(freeze->ulControl + GF_DMA_START, &gpu.dma_start);
+      freeze->ulControl[GF_GP0] = gpu.gp0;
       break;
     case 0: // load
       sync_renderer(&gpu);
@@ -1102,8 +1146,25 @@ long GPUfreeze(uint32_t type, GPUFreeze_t *freeze, uint16_t **vram_ptr)
       memcpy(gpu.ex_regs, freeze->ulControl + 0xe0, sizeof(gpu.ex_regs));
       gpu.status = freeze->ulStatus;
       gpu.cmd_len = 0;
-      for (i = 8; i > 1; i--)
+      // Not GP1(02): it acknowledges an interrupt, which status above has
+      // already put back as it was. Replaying it also left regs[2] holding
+      // the acknowledge, so the game's next one matched the write cache,
+      // was dropped, and the IRQ stayed latched -- a replay went its own way.
+      for (i = 8; i > 2; i--)
         GPUwriteStatus((i << 24) | freeze->ulControl[i]);
+      // regs is a cache of the last write per command, which is what decides
+      // whether the next write takes effect, so it comes back as it was saved.
+      memcpy(gpu.regs + 2, freeze->ulControl + 2, sizeof(gpu.regs) - 2 * sizeof(gpu.regs[0]));
+      if (freeze->ulControl[GF_MAGIC] == GPULIB_FREEZE_MAGIC) {
+        uint32_t f = freeze->ulControl[GF_FLAGS];
+        gpu.frameskip.last_flip_frame = freeze->ulControl[GF_FLIP];
+        gpu.state.fb_dirty = f & 1;
+        gpu.state.fb_dirty_display_area = (f >> 1) & 1;
+        gpu.state.draw_display_intersect = (f >> 2) & 1;
+        thaw_dma(&gpu.dma, freeze->ulControl + GF_DMA);
+        thaw_dma(&gpu.dma_start, freeze->ulControl + GF_DMA_START);
+        gpu.gp0 = freeze->ulControl[GF_GP0];
+      }
       renderer_sync_ecmds(gpu.ex_regs);
       renderer_update_caches(0, 0, 1024, 512, 0);
       gpu_async_sync_ecmds(&gpu);

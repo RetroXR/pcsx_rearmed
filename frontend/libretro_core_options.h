@@ -224,6 +224,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled",
    },
+   {
+      "pcsx_rearmed_link_frame_edges",
+      "Link Cable Frame Edges",
+      NULL,
+      "Keep a cabled pair's serial traffic inside each frame: the port never runs past the end of a frame to meet the other console, and a byte due after the edge waits for the next frame. This is what lets netplay roll two cabled consoles back together; a frontend that runs a cabled session pins it on. Off is the port as it was before, which meets the other console wherever the rendezvous interval falls.",
+      NULL,
+      "system",
+      {
+         { "enabled",  "enabled" },
+         { "disabled", "disabled" },
+         { NULL, NULL },
+      },
+      "enabled",
+   },
 #if defined(HAVE_CDROM) || defined(USE_ASYNC_CDROM)
 #define V(x) { #x, NULL }
    {

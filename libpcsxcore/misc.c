@@ -728,6 +728,13 @@ struct misc_save_data {
 	// The interpreter's fraction of a cycle. Zero in states from before it was
 	// kept, which is what a load always set it to.
 	u32 subCycle;
+	// The memory cards' FLAG byte. A load sets its "new card" bit (sioFreeze)
+	// in case the card changed since the save; a game that polls its cards,
+	// as WipEout does when its menu opens, then re-reads the directory and
+	// goes somewhere the original run never went. Kept so a load is exact;
+	// have_mcd_flag is zero in states from before.
+	u8 mcd_flag[2];
+	u8 have_mcd_flag;
 };
 
 #define EX_SCREENPIC_SIZE (128 * 96 * 3)
@@ -766,6 +773,9 @@ int SaveState(const char *file) {
 	misc->CdromFrontendId = CdromFrontendId;
 	misc->save_counter = ++save_counter;
 	misc->subCycle = psxRegs.subCycle;
+	misc->mcd_flag[0] = McdFlag[0];
+	misc->mcd_flag[1] = McdFlag[1];
+	misc->have_mcd_flag = 1;
 
 	psxCpu->Notify(R3000ACPU_NOTIFY_BEFORE_SAVE, NULL);
 
@@ -834,6 +844,7 @@ int LoadState(const char *file) {
 	struct misc_save_data *misc = (void *)(psxRegs.ptrs.psxH + 0xf000);
 	u32 biosBranchCheckOld = psxRegs.biosBranchCheck;
 	u32 sub_cycle = 0;
+	u8 mcd_flag[2] = { 0, 0 }, have_mcd_flag = 0;
 	union {
 		// save stack space
 		GPUFreeze_t gpu_hdr;
@@ -908,6 +919,9 @@ int LoadState(const char *file) {
 		if (misc->save_counter)
 			save_counter = misc->save_counter;
 		sub_cycle = misc->subCycle;
+		have_mcd_flag = misc->have_mcd_flag;
+		mcd_flag[0] = misc->mcd_flag[0];
+		mcd_flag[1] = misc->mcd_flag[1];
 	}
 
 	if (Config.HLE)
@@ -939,6 +953,10 @@ int LoadState(const char *file) {
 	}
 
 	sioFreeze(f, 0);
+	if (have_mcd_flag) {
+		McdFlag[0] = mcd_flag[0];
+		McdFlag[1] = mcd_flag[1];
+	}
 	cdrFreeze(f, 0);
 	psxHwFreeze(f, 0);
 	psxRcntFreeze(f, 0);

@@ -137,6 +137,9 @@ typedef struct
  // are SPU RAM a game can read and put an IRQ on, so a load resetting this to
  // a full 512 wrote silence there that the original run never wrote.
  int32_t    cd_clear_samples;
+ // regArea past the 0x200 bytes of SPUPorts. Nothing restored it, so a load
+ // kept whatever the running process last left there.
+ uint16_t   reg_hi[0x300];
 
 } SPUOSSFreeze_t;
 
@@ -331,6 +334,7 @@ long DoFreeze(int ulFreezeMode, struct SPUFreeze * pF, unsigned short **ram,
     memcpy(&pFO->rvb_sb[i], sb_rvb->sample[i], sizeof(pFO->rvb_sb[i]));
    pFO->interpolation = spu.interpolation;
    pFO->cd_clear_samples = spu.cdClearSamples;
+   memcpy(pFO->reg_hi, spu.regArea + 0x100, sizeof(pFO->reg_hi));
 
    for(i=0;i<MAXCHAN;i++)
     {
@@ -399,6 +403,9 @@ long DoFreeze(int ulFreezeMode, struct SPUFreeze * pF, unsigned short **ram,
  if (pFO && pF->Size >= ossOffset + offsetof(SPUOSSFreeze_t, cd_clear_samples)
      + sizeof(pFO->cd_clear_samples))
   spu.cdClearSamples = pFO->cd_clear_samples;
+ if (pFO && pF->Size >= ossOffset + offsetof(SPUOSSFreeze_t, reg_hi)
+     + sizeof(pFO->reg_hi))
+  memcpy(spu.regArea + 0x100, pFO->reg_hi, sizeof(pFO->reg_hi));
  for (i = 0; i <= 2; i += 2)
   if (!regAreaGet(H_SPUcmvolL+i) && regAreaGet(H_SPUmvolL+i) < 0x8000u)
    regAreaRef(H_SPUcmvolL+i) = regAreaGet(H_SPUmvolL+i) << 1;

@@ -348,6 +348,18 @@ static void scheduleRcntBase(void)
     }
 }
 
+u32 psxRcntFrameEndCycle(void)
+{
+    u32 mult = Config.PsxType ? 8836089 : 8791293;
+    u32 end = rcnts[3].cycleStart + ((VBlankStart * mult) >> 12);
+
+    // Already at or past this frame's VBlankStart: that stop has happened, so
+    // the one coming is next frame's.
+    if (hSyncCount >= VBlankStart)
+        end += frameCycles();
+    return end;
+}
+
 void psxRcntUpdate()
 {
     u32 cycle, cycles_passed;

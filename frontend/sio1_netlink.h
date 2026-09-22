@@ -29,4 +29,12 @@
 void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port);
 void sio1NetlinkDetach(void);
 
+/* Either side of the CPU running one frame; see nl_frame_end. */
+void sio1NetlinkFrameBegin(void);
+void sio1NetlinkFrameEnd(void);
+
+/* Whether FrameBegin/FrameEnd hold the port to the frame; see nl_frame_end.
+ * On by default (pcsx_rearmed_link_frame_edges). */
+void sio1NetlinkSetFrameEdges(int on);
+
 #endif /* __SIO1_NETLINK_H__ */

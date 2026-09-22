@@ -6,12 +6,14 @@
  */
 
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 #include "sio1_netlink.h"
 #include "../libpcsxcore/psxcommon.h"
 #include "../libpcsxcore/r3000a.h"
 #include "../libpcsxcore/sio1.h"
+#include "../libpcsxcore/psxcounters.h"
 
 /* Peers whose protocol id differs are never joined, which is what keeps this
  * cable out of a socket meant for something else. */
@@ -125,6 +127,34 @@ static int nl_lines_published;
 static u8 nl_peer_lines;
 static int nl_peer_lines_seen;
 
+/* The frame being run, in this console's link ticks.
+ *
+ * Group rollback stops every cabled console at every frame edge, and a frame
+ * edge is only one instant on the wire if nothing about a frame reaches past
+ * it. So the port never asks the bus for more than the frame (a peer already
+ * stopped at the edge could never grant it), a byte stamped past the edge
+ * waits for the next frame (the peer has not said what comes after the edge
+ * yet, so whether it has arrived is a matter of thread timing), and at the edge
+ * this console promises a little way into the next frame, which covers the
+ * instructions a CPU runs past the stop before it notices. The frames
+ * themselves already line up: every PlayStation frame is the same number of
+ * cycles, and a cable joins at an edge. */
+#define NL_EDGE_MARGIN 8192
+
+/* How far the bus has let this console run, or ~0 when nothing bounds it.
+ *
+ * A byte may land only up to here. The CPU overshoots its scheduled
+ * rendezvous by an instruction, or by a whole block under a recompiler, and a
+ * register read in that overshoot used to land anything due by the current
+ * cycle -- but a byte due past the grant may not be on the bus yet, and
+ * whether it is depends on how far the other emulation thread has got. Two
+ * schedules of the same inputs (a group stopped at every frame edge, and two
+ * consoles in plain lockstep) then saw the byte a poll apart. */
+static uint64_t nl_granted = ~(uint64_t)0;
+static int nl_in_frame;
+static int nl_frame_edges = 1;
+static uint64_t nl_frame_end;
+
 static struct nl_event nl_pending[NL_PENDING_MAX];
 static unsigned nl_pending_count;
 static uint64_t nl_next_seq;
@@ -165,6 +195,34 @@ static void nl_send(uint64_t tick, u8 type, u8 value, u8 want)
 	msg[4] = value;
 	msg[5] = want;
 	nl_link->send(nl_handle, tick, RETRO_LINK_BROADCAST, msg, sizeof(msg));
+}
+
+/* Advance to `request`, and not a tick short of it.
+ *
+ * The bus may hand back less than was asked for, when a message or a cable
+ * change arrives while this console is waiting. What that says is only that
+ * something happened on another emulation thread at some moment, and a port
+ * that acted on it -- polling again sooner, say -- would take its next event at
+ * a cycle chosen by thread timing. Two runs of the same inputs, or a rollback
+ * and the lockstep run it has to reproduce, then part ways. So the early return
+ * is taken only to drain the queue (which lands nothing: bytes land by their
+ * tick) and the port goes straight back to waiting for what it asked. */
+static void nl_drain(void);
+
+static uint64_t nl_advance_to(uint64_t now, uint64_t request)
+{
+	for (;;) {
+		uint32_t wake_flags = RETRO_LINK_WAKE_NONE;
+		uint64_t grant = nl_link->advance(nl_handle, now, nl_safe, request, &wake_flags);
+
+		if (grant == RETRO_LINK_UNBOUNDED || grant >= request ||
+		    (wake_flags & RETRO_LINK_WAKE_DETACHED)) {
+			nl_granted = (grant == RETRO_LINK_UNBOUNDED ||
+				(wake_flags & RETRO_LINK_WAKE_DETACHED)) ? ~(uint64_t)0 : grant;
+			return grant;
+		}
+		nl_drain();
+	}
 }
 
 static void nl_publish_lines(void)
@@ -279,11 +337,16 @@ static void nl_release(void)
 {
 	uint64_t now = nl_clock();
 
+	if (now > nl_granted)
+		now = nl_granted;
+
 	for (;;) {
 		unsigned i, best = NL_PENDING_MAX;
 
 		for (i = 0; i < nl_pending_count; i++) {
 			if (nl_pending[i].tick > now)
+				continue;
+			if (nl_in_frame && nl_pending[i].tick > nl_frame_end)
 				continue;
 			if (best == NL_PENDING_MAX ||
 			    nl_pending[i].tick < nl_pending[best].tick ||
@@ -360,13 +423,18 @@ static void nl_drv_tx(unsigned char data, u32 cycles)
 static u32 nl_drv_poll(u32 grain, u32 horizon)
 {
 	uint64_t now, grant;
-	uint32_t wake_flags = RETRO_LINK_WAKE_NONE;
 
 	if (!nl_attached)
 		return grain;
 
 	now = nl_clock();
-	nl_safe = now + horizon;
+	/* Never back. A horizon is a promise the peers have already run on -- the
+	 * one made at a frame edge reaches well past what a poll would promise --
+	 * and a byte stamped under a promise taken back lands at a tick the other
+	 * console may already have passed, so where it lands depends on which
+	 * emulation thread got where first. */
+	if (now + horizon > nl_safe)
+		nl_safe = now + horizon;
 
 	/* Published before reading, because a peer parked on this console's horizon
 	 * cannot move until it has been told the horizon moved, and it may be
@@ -377,7 +445,13 @@ static u32 nl_drv_poll(u32 grain, u32 horizon)
 	 * every console on it, and a message put on the wire between that moment
 	 * and this console's next rendezvous carries an offset from an origin that
 	 * has been thrown away. */
-	grant = nl_link->advance(nl_handle, now, nl_safe, now + grain, &wake_flags);
+	{
+		uint64_t request = now + grain;
+
+		if (nl_in_frame && request > nl_frame_end)
+			request = nl_frame_end > now ? nl_frame_end : now;
+		grant = nl_advance_to(now, request);
+	}
 
 	nl_refresh_peers();
 
@@ -462,7 +536,7 @@ static int nl_drv_connected(void)
  * are the same bytes. The handle and the attachment are not saved: they are the
  * frontend's live objects, not state. */
 #define NL_STATE_MAGIC   0x4b4e4c4e /* "NLNK" */
-#define NL_STATE_VERSION 1
+#define NL_STATE_VERSION 3
 
 struct nl_saved_event {
 	uint64_t tick;
@@ -487,8 +561,11 @@ struct nl_state {
 	u8 lines_published;
 	u8 peer_lines;
 	u8 peer_lines_seen;
-	u8 pad[7];
+	u8 in_frame;
+	u8 pad[6];
 	struct nl_saved_event pending[NL_PENDING_MAX];
+	uint64_t frame_end;   /* version 2 */
+	uint64_t granted;     /* version 3 */
 };
 
 static u32 nl_drv_state_size(void)
@@ -518,6 +595,9 @@ static void nl_drv_save(void *buf)
 	st->lines_published = (u8)nl_lines_published;
 	st->peer_lines = nl_peer_lines;
 	st->peer_lines_seen = (u8)nl_peer_lines_seen;
+	st->in_frame = (u8)nl_in_frame;
+	st->frame_end = nl_frame_end;
+	st->granted = nl_granted;
 	for (i = 0; i < nl_pending_count; i++) {
 		st->pending[i].tick = nl_pending[i].tick;
 		st->pending[i].seq = nl_pending[i].seq;
@@ -532,8 +612,18 @@ static int nl_drv_load(const void *buf, u32 size)
 	const struct nl_state *st = buf;
 	unsigned i;
 
-	if (size != sizeof(*st) || st->magic != NL_STATE_MAGIC ||
-	    st->version != NL_STATE_VERSION || st->pending_count > NL_PENDING_MAX)
+	/* Version 1 is the same layout short of frame_end, and was only ever
+	 * written between frames. */
+	if (size < offsetof(struct nl_state, frame_end) || st->magic != NL_STATE_MAGIC ||
+	    st->pending_count > NL_PENDING_MAX)
+		return 0;
+	if (st->version == 1)
+		nl_in_frame = 0, nl_frame_end = 0, nl_granted = ~(uint64_t)0;
+	else if (st->version == 2 && size >= offsetof(struct nl_state, granted))
+		nl_in_frame = st->in_frame, nl_frame_end = st->frame_end, nl_granted = ~(uint64_t)0;
+	else if (st->version == NL_STATE_VERSION && size == sizeof(*st))
+		nl_in_frame = st->in_frame, nl_frame_end = st->frame_end, nl_granted = st->granted;
+	else
 		return 0;
 
 	nl_now = st->now;
@@ -575,6 +665,51 @@ static const struct sio1_driver nl_driver = {
 
 /* ── attach and detach ────────────────────────────────────────────────────── */
 
+/* A rendezvous at the edge itself. Everything any peer has stamped up to here
+ * is on the bus once this returns, so it is all drained before the frame runs:
+ * what is already in hand at the start of a frame is a function of the frame,
+ * not of how far the other emulation thread had got. */
+static void nl_edge(uint64_t promise)
+{
+	uint64_t now = nl_clock();
+
+	if (promise > nl_safe)
+		nl_safe = promise;
+	nl_advance_to(now, now);
+	nl_refresh_peers();
+	if (nl_peers >= 2 && !nl_peer_lines_seen)
+		nl_publish_lines();
+	nl_drain();
+}
+
+void sio1NetlinkSetFrameEdges(int on)
+{
+	nl_frame_edges = on ? 1 : 0;
+	if (!nl_frame_edges)
+		nl_in_frame = 0;
+}
+
+void sio1NetlinkFrameBegin(void)
+{
+	uint64_t now;
+
+	if (!nl_attached || !nl_frame_edges)
+		return;
+	now = nl_clock();
+	nl_edge(now);
+	nl_frame_end = now + (u32)(psxRcntFrameEndCycle() - psxRegs.cycle);
+	nl_in_frame = 1;
+	nl_release();
+}
+
+void sio1NetlinkFrameEnd(void)
+{
+	if (!nl_attached || !nl_frame_edges)
+		return;
+	nl_in_frame = 0;
+	nl_edge(nl_frame_end + NL_EDGE_MARGIN);
+}
+
 void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port)
 {
 	if (nl_attached || !link)
@@ -597,6 +732,7 @@ void sio1NetlinkAttach(const struct retro_link_interface *link, unsigned port)
 	nl_next_seq = 0;
 	nl_last_stamp = 0;
 	nl_last_span = 0;
+	nl_granted = ~(uint64_t)0;
 	nl_lines = 0;
 	nl_lines_published = 0;
 	nl_peer_lines = 0;

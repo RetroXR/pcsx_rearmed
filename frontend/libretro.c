@@ -3129,6 +3129,8 @@ static void update_variables(bool in_flight)
       // exactly as it can on the desk.
       bool want = get_bool_variable("pcsx_rearmed_link_cable");
 
+      sio1NetlinkSetFrameEdges(get_bool_variable("pcsx_rearmed_link_frame_edges"));
+
       if (want != link_attached)
       {
          if (want)
@@ -3625,7 +3627,9 @@ void retro_run(void)
       apply_memcard_inserted();
 
    psxRegs.stop = 0;
+   sio1NetlinkFrameBegin();
    psxCpu->Execute(&psxRegs);
+   sio1NetlinkFrameEnd();
 
    if (pl_rearmed_cbs.fskip_dirty) {
       if (frameskip_counter >= frameskip_interval || !pl_rearmed_cbs.fskip_force)

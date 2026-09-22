@@ -54,6 +54,10 @@ u32 psxRcntRtarget(u32 index);
 
 s32 psxRcntFreeze(void *f, s32 Mode);
 
+/* The cycle the running frame stops on: the next VBlankStart, where retro_run
+ * returns. Exact, and the same on every console at the same video standard. */
+u32 psxRcntFrameEndCycle(void);
+
 double psxGetFps();
 
 #ifdef __cplusplus
