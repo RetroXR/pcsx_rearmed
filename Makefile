@@ -93,7 +93,7 @@ OBJS += libpcsxcore/cdriso.o libpcsxcore/cdrom.o libpcsxcore/cdrom-async.o \
 	libpcsxcore/psxcommon.o libpcsxcore/psxcounters.o libpcsxcore/psxdma.o \
 	libpcsxcore/psxhw.o libpcsxcore/psxinterpreter.o libpcsxcore/psxmem.o \
 	libpcsxcore/psxevents.o libpcsxcore/r3000a.o \
-	libpcsxcore/sio.o libpcsxcore/spu.o libpcsxcore/gpu.o \
+	libpcsxcore/sio.o libpcsxcore/sio1.o libpcsxcore/spu.o libpcsxcore/gpu.o \
 	libpcsxcore/pad.o
 OBJS += libpcsxcore/gte.o libpcsxcore/gte_nf.o libpcsxcore/gte_divider.o
 #OBJS += libpcsxcore/debug.o libpcsxcore/socket.o libpcsxcore/disr3000a.o
@@ -452,7 +452,7 @@ OBJS += deps/libretro-common/streams/file_stream_transforms.o
 OBJS += deps/libretro-common/time/rtime.o
 CFLAGS += -DUSE_LIBRETRO_VFS
 endif
-OBJS += frontend/libretro.o
+OBJS += frontend/libretro.o frontend/sio1_netlink.o
 CFLAGS += -DHAVE_LIBRETRO
 INC_LIBRETRO_COMMON := 1
 

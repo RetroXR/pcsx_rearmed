@@ -818,6 +818,7 @@ int SaveState(const char *file) {
 	mdecFreeze(f, 1);
 	ndrc_freeze(f, 1);
 	padFreeze(f, 1);
+	sio1Freeze(f, 1);
 
 	memset(misc, 0, sizeof(*misc));
 	SaveFuncs.close(f);
@@ -943,6 +944,13 @@ int LoadState(const char *file) {
 	}
 	ndrc_freeze(f, 0);
 	padFreeze(f, 0);
+
+	// The serial port, and the link driver's half of the cable. A state written
+	// before the port was saved has nothing here, and gets a clean port, which
+	// also re-anchors the link driver's timeline: psxRegs.cycle has just moved
+	// by an arbitrary amount, including backwards.
+	if (!sio1Freeze(f, 0))
+		sio1Reset();
 
 	events_restore();
 	if (Config.HLE)

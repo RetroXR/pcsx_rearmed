@@ -50,6 +50,7 @@ SOURCES_C := $(CORE_DIR)/cdriso.c \
              $(CORE_DIR)/psxmem.c \
              $(CORE_DIR)/r3000a.c \
              $(CORE_DIR)/sio.c \
+             $(CORE_DIR)/sio1.c \
              $(CORE_DIR)/spu.c \
              $(CORE_DIR)/gpu.c \
              $(CORE_DIR)/gte.c \
@@ -76,7 +77,8 @@ SOURCES_C += $(CDR_DIR)/cdrcimg.c
 SOURCES_C += $(FRONTEND_DIR)/main.c \
              $(FRONTEND_DIR)/plugin.c \
              $(FRONTEND_DIR)/cspace.c \
-             $(FRONTEND_DIR)/libretro.c
+             $(FRONTEND_DIR)/libretro.c \
+             $(FRONTEND_DIR)/sio1_netlink.c
 
 # libchdr
 LCHDR = $(DEPS_DIR)/libchdr

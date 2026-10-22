@@ -28,6 +28,7 @@ extern "C" {
 #include "r3000a.h"
 #include "psxmem.h"
 #include "sio.h"
+#include "sio1.h"
 #include "psxcounters.h"
 
 #define HW_DMA0_MADR (psxHu32ref(0x1080)) // MDEC in DMA
@@ -80,7 +81,6 @@ u32 psxHwRead32(u32 add);
 void psxHwWrite8(u32 add, u32 value);
 void psxHwWrite16(u32 add, u32 value);
 void psxHwWrite32(u32 add, u32 value);
-u32 sio1ReadStat16(void);
 int psxHwFreeze(void *f, int Mode);
 
 void psxHwWriteIstat(u32 value);

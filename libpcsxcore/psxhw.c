@@ -34,6 +34,7 @@ void psxHwReset() {
 	mdecInit(); // initialize mdec decoder
 	cdrReset();
 	sioReset();
+	sio1Reset();
 	psxRcntInit();
 	HW_GPU_STATUS = SWAP32(0x10802000);
 }
@@ -156,17 +157,14 @@ u32 psxHwReadGpuSR(void)
 	return v;
 }
 
-u32 sio1ReadStat16(void)
-{
-	// Armored Core, F1 Link cable misdetection
-	return 0xa0;
-}
-
 u8 psxHwRead8(u32 add) {
 	u8 hard;
 
 	switch (add & 0xffff) {
 	case 0x1040: hard = sioRead8(); break;
+	case 0x1050: hard = sio1Read8(); break;
+	case 0x1054: hard = sio1ReadStat16(); break;
+	case 0x1055: hard = sio1ReadStat16() >> 8; break;
 	case 0x1800: hard = cdrRead0(); break;
 	case 0x1801: hard = cdrRead1(); break;
 	case 0x1802: hard = cdrRead2(); break;
@@ -179,8 +177,7 @@ u8 psxHwRead8(u32 add) {
 	case 0x104a: case 0x104b:
 	case 0x104c: case 0x104d:
 	case 0x104e: case 0x104f:
-	case 0x1050: case 0x1051:
-	case 0x1054: case 0x1055:
+	case 0x1051:
 	case 0x1058: case 0x1059:
 	case 0x105a: case 0x105b:
 	case 0x105c: case 0x105d:
@@ -225,7 +222,11 @@ u16 psxHwRead16(u32 add) {
 	case 0x1048: hard = sioReadMode16(); break;
 	case 0x104a: hard = sioReadCtrl16(); break;
 	case 0x104e: hard = sioReadBaud16(); break;
+	case 0x1050: hard = sio1Read8(); break;
 	case 0x1054: hard = sio1ReadStat16(); break;
+	case 0x1058: hard = sio1ReadMode16(); break;
+	case 0x105a: hard = sio1ReadCtrl16(); break;
+	case 0x105e: hard = sio1ReadBaud16(); break;
 	case 0x1100: hard = psxRcntRcount0(); break;
 	case 0x1104: hard = psxRcntRmode(0); break;
 	case 0x1108: hard = psxRcntRtarget(0); break;
@@ -239,9 +240,6 @@ u16 psxHwRead16(u32 add) {
 	case 0x1042:
 	case 0x1046:
 	case 0x104c:
-	case 0x1050:
-	case 0x1058:
-	case 0x105a:
 	case 0x105c:
 	case 0x1800:
 	case 0x1802:
@@ -273,6 +271,9 @@ u32 psxHwRead32(u32 add) {
 	switch (add & 0xffff) {
 	case 0x1040: hard = sioRead8(); break;
 	case 0x1044: hard = sioReadStat16(); break;
+	case 0x1050: hard = sio1Read8(); break;
+	case 0x1054: hard = sio1ReadStat16(); break;
+	case 0x1058: hard = sio1ReadMode16() | ((u32)sio1ReadCtrl16() << 16); break;
 	case 0x1100: hard = psxRcntRcount0(); break;
 	case 0x1104: hard = psxRcntRmode(0); break;
 	case 0x1108: hard = psxRcntRtarget(0); break;
@@ -289,9 +290,6 @@ u32 psxHwRead32(u32 add) {
 
 	case 0x1048:
 	case 0x104c:
-	case 0x1050:
-	case 0x1054:
-	case 0x1058:
 	case 0x105c:
 	case 0x1800:
 		log_unhandled("unhandled r32 %08x @%08x\n", add, psxRegs.pc);
@@ -311,6 +309,7 @@ u32 psxHwRead32(u32 add) {
 void psxHwWrite8(u32 add, u32 value) {
 	switch (add & 0xffff) {
 	case 0x1040: sioWrite8(value); return;
+	case 0x1050: sio1Write8(value); return;
 	case 0x10f6:
 		// nocash documents it as forced w32, but still games use this?
 		break;
@@ -341,6 +340,11 @@ void psxHwWrite16(u32 add, u32 value) {
 	case 0x1048: sioWriteMode16(value); return;
 	case 0x104a: sioWriteCtrl16(value); return;
 	case 0x104e: sioWriteBaud16(value); return;
+	case 0x1050: sio1Write8(value); return;
+	case 0x1054: sio1WriteStat16(value); return;
+	case 0x1058: sio1WriteMode16(value); return;
+	case 0x105a: sio1WriteCtrl16(value); return;
+	case 0x105e: sio1WriteBaud16(value); return;
 	case 0x1070: psxHwWriteIstat(value); return;
 	case 0x1074: psxHwWriteImask(value); return;
 	case 0x1100: psxRcntWcount(0, value); return;
@@ -410,6 +414,9 @@ void psxHwWrite16(u32 add, u32 value) {
 void psxHwWrite32(u32 add, u32 value) {
 	switch (add & 0xffff) {
 	case 0x1040: sioWrite8(value); return;
+	case 0x1050: sio1Write8(value); return;
+	case 0x1054: sio1WriteStat16(value); return;
+	case 0x1058: sio1WriteMode16(value); sio1WriteCtrl16(value >> 16); return;
 	case 0x1070: psxHwWriteIstat(value); return;
 	case 0x1074: psxHwWriteImask(value); return;
 	case 0x1088: // DMA0 chcr (MDEC in DMA)
@@ -450,9 +457,6 @@ void psxHwWrite32(u32 add, u32 value) {
 	case 0x1044:
 	case 0x1048:
 	case 0x104c:
-	case 0x1050:
-	case 0x1054:
-	case 0x1058:
 	case 0x105c:
 	case 0x1800:
 		log_unhandled("unhandled w32 %08x %08x @%08x\n", add, value, psxRegs.pc);
