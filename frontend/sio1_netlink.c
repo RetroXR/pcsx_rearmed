@@ -17,7 +17,7 @@
 
 /* Peers whose protocol id differs are never joined, which is what keeps this
  * cable out of a socket meant for something else. */
-#define NETLINK_PROTOCOL "psx-sio-1"
+#define NETLINK_PROTOCOL "psx-sio"
 
 /* A link cable has two ends. The bus is protocol-agnostic and would happily
  * join a third console; refusing it here is cheaper than working out what a
