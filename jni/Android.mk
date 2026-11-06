@@ -73,6 +73,12 @@ SOURCES_C += $(GPU_DIR)/gpu.c \
 # cdrcimg
 SOURCES_C += $(CDR_DIR)/cdrcimg.c
 
+# A PocketStation in a memory card slot: the glue and Pokket's emulation core (MIT,
+# deps/pokket/README.retroxr). Its own headers sit beside its sources.
+POKKET_DIR := $(DEPS_DIR)/pokket
+SOURCES_C += $(CORE_DIR)/pocketstation.c              $(addprefix $(POKKET_DIR)/src/,arm_exec.c clk.c com.c cpu.c dac.c flash.c intc.c                iop.c ir.c lcd.c memory.c psemu.c rtc.c state.c thumb_exec.c timer.c)
+EXTRA_INCLUDES += $(POKKET_DIR)/include
+
 # frontend
 SOURCES_C += $(FRONTEND_DIR)/main.c \
              $(FRONTEND_DIR)/plugin.c \
