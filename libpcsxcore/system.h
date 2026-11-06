@@ -26,6 +26,7 @@ extern "C" {
 
 int SysInit();							// Init mem and plugins
 void SysReset();						// Resets mem
+void SysWarn(const char *fmt, ...);
 void SysPrintf(const char *fmt, ...)
 #if defined(__GNUC__) && defined(__x86_64__) // some platforms have int32_t as long
 	 __attribute__((format(printf, 1, 2)))

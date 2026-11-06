@@ -32,6 +32,7 @@
 #include "../libpcsxcore/psxmem_map.h"
 #include "../libpcsxcore/new_dynarec/new_dynarec.h"
 #include "../libpcsxcore/cdrom.h"
+#include "../libpcsxcore/pocketstation.h"
 #include "../libpcsxcore/cdrom-async.h"
 #include "../libpcsxcore/cdriso.h"
 #include "../libpcsxcore/cheat.h"
@@ -3141,6 +3142,17 @@ static void update_variables(bool in_flight)
             memcard_insert_pending = true;
          }
       }
+
+      for (i = 0; i < 2; i++)
+      {
+         char key[40];
+
+         snprintf(key, sizeof(key), "pcsx_rearmed_memcard%d_device", i + 1);
+         var.value = NULL;
+         var.key = key;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+            PocketStationSetWanted(i, strcmp(var.value, "pocketstation") == 0);
+      }
    }
 
    if (link_interface)
@@ -3652,6 +3664,7 @@ void retro_run(void)
    sio1NetlinkFrameBegin();
    psxCpu->Execute(&psxRegs);
    sio1NetlinkFrameEnd();
+   PocketStationFrame();
 
    if (pl_rearmed_cbs.fskip_dirty) {
       if (frameskip_counter >= frameskip_interval || !pl_rearmed_cbs.fskip_force)
@@ -4198,6 +4211,20 @@ void SysPrintf(const char *fmt, ...)
 
    if (log_cb)
       log_cb(RETRO_LOG_INFO, "%s", msg);
+}
+
+/* Prints at WARN: libretro-godot drops anything quieter. */
+void SysWarn(const char *fmt, ...)
+{
+   va_list list;
+   char msg[512];
+
+   va_start(list, fmt);
+   vsprintf(msg, fmt, list);
+   va_end(list);
+
+   if (log_cb)
+      log_cb(RETRO_LOG_WARN, "%s", msg);
 }
 
 /* Prints debug-level logs */

@@ -1,0 +1,2 @@
+Pokket emulation core (core/ only), MIT, from https://github.com/mentalfoundry/Pokket
+at v1.24 (4bf5429). Only core/ is vendored: Pokket's frontends are GPL. Do not edit here.

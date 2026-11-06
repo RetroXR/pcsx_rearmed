@@ -93,9 +93,14 @@ OBJS += libpcsxcore/cdriso.o libpcsxcore/cdrom.o libpcsxcore/cdrom-async.o \
 	libpcsxcore/psxcommon.o libpcsxcore/psxcounters.o libpcsxcore/psxdma.o \
 	libpcsxcore/psxhw.o libpcsxcore/psxinterpreter.o libpcsxcore/psxmem.o \
 	libpcsxcore/psxevents.o libpcsxcore/r3000a.o \
-	libpcsxcore/sio.o libpcsxcore/sio1.o libpcsxcore/spu.o libpcsxcore/gpu.o \
+	libpcsxcore/sio.o libpcsxcore/pocketstation.o libpcsxcore/sio1.o libpcsxcore/spu.o libpcsxcore/gpu.o \
 	libpcsxcore/pad.o
 OBJS += libpcsxcore/gte.o libpcsxcore/gte_nf.o libpcsxcore/gte_divider.o
+# Pokket's emulation core (MIT, deps/pokket/README.retroxr): the PocketStation in a card slot.
+POKKET_SRCS = arm_exec clk com cpu dac flash intc iop ir lcd memory psemu rtc state thumb_exec timer
+OBJS += $(patsubst %,deps/pokket/src/%.o,$(POKKET_SRCS))
+CFLAGS += -Ideps/pokket/include
+deps/pokket/src/%.o: CFLAGS += -Ideps/pokket/src -std=gnu99
 #OBJS += libpcsxcore/debug.o libpcsxcore/socket.o libpcsxcore/disr3000a.o
 
 ifeq "$(ARCH)" "arm"

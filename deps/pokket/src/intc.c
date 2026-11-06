@@ -1,0 +1,211 @@
+/* SPDX-FileCopyrightText: Copyright (c) 2026 Darien Liu (mentalfoundry)
+   SPDX-License-Identifier: MIT */
+
+#include "intc.h"
+
+#include <stdio.h>
+
+#include "cpu.h"
+
+/* Diagnostic flag. See psemu_debug_current_pc in cpu.h.
+   This flag is off by default, thus it has no cost in normal use.
+   The `intctrace` flag in tools/inspect.c sets it, to record each real INTC access with its real PC.
+   A static disassembly cannot tell ARM code from Thumb code, because it does not track the mode during
+   execution. */
+int psemu_intc_trace_enabled = 0;
+
+static const char *offset_name(uint32_t word_index) {
+    switch (word_index) {
+    case 0:
+        return "hold";
+    case 1:
+        return "status";
+    case 2:
+        return "enable";
+    case 3:
+        return "mask";
+    default:
+        return "ack";
+    }
+}
+
+void intc_init(intc_t *intc) {
+    intc->hold = 0;
+    intc->status = 0;
+    intc->enable = 0;
+    intc->mask = 0;
+    intc->enable_write_scratch = 0;
+    intc->mask_write_scratch = 0;
+    intc->ack_write_scratch = 0;
+    intc->changes = 0;
+}
+
+uint8_t intc_read8(intc_t *intc, uint32_t offset) {
+    uint32_t word_index = offset / 4u;
+    uint32_t shift = (offset % 4u) * 8u;
+    uint32_t value;
+
+    switch (word_index) {
+    case 0:
+        value = intc->hold;
+        break;
+    case 1:
+        value = intc->status;
+        break;
+    case 2:
+        value = intc->enable;
+        break;
+    default: /* on real hardware, mask (+0xC) and acknowledge (+0x10) read back as 0 */
+        value = 0;
+        break;
+    }
+    if (psemu_intc_trace_enabled) {
+        printf(
+            "[intc trace] pc=0x%08X READ %s (+0x%X) byte@shift%u = 0x%02X (full=0x%08X)\n",
+            psemu_debug_current_pc, offset_name(word_index), (unsigned)offset, (unsigned)shift,
+            (unsigned)((value >> shift) & 0xFFu), value);
+    }
+    return (uint8_t)(value >> shift);
+}
+
+static void accumulate_byte(uint32_t *scratch, uint32_t shift, uint8_t value) {
+    *scratch = (*scratch & ~(0xFFu << shift)) | ((uint32_t)value << shift);
+}
+
+/* Sets the HOLD bits of the buttons to the button level AND the ENABLE bit. Each change of STATUS,
+   ENABLE, or HOLD calls it. See INT_BUTTON_MASK in intc.h. */
+static void update_buttons(intc_t *intc) {
+    intc->hold = (intc->hold & ~INT_BUTTON_MASK) | (intc->status & intc->enable & INT_BUTTON_MASK);
+}
+
+static void intc_write8_body(intc_t *intc, uint32_t offset, uint8_t value) {
+    uint32_t word_index = offset / 4u;
+    uint32_t shift = (offset % 4u) * 8u;
+
+    if (psemu_intc_trace_enabled) {
+        printf(
+            "[intc trace] pc=0x%08X WRITE %s (+0x%X) byte@shift%u = 0x%02X\n", psemu_debug_current_pc,
+            offset_name(word_index), (unsigned)offset, (unsigned)shift, (unsigned)value);
+    }
+
+    switch (word_index) {
+    case 0: /* hold: an invalid write on real hardware. It has no effect. */
+    case 1: /* status: an invalid write on real hardware. It has no effect. */
+        break;
+    case 2: /* enable: OR the bits in after a full 32-bit store completes */
+        accumulate_byte(&intc->enable_write_scratch, shift, value);
+        if (shift == 24u) {
+            intc->enable |= intc->enable_write_scratch;
+        }
+        break;
+    case 3: /* mask: clear the applicable enable bits, and latch the mask value */
+        accumulate_byte(&intc->mask_write_scratch, shift, value);
+        if (shift == 24u) {
+            intc->enable &= ~intc->mask_write_scratch;
+            intc->mask = intc->mask_write_scratch;
+        }
+        break;
+    default: /* acknowledge (+0x10): clear the applicable bits from hold, and from status except the live-level bits */
+        accumulate_byte(&intc->ack_write_scratch, shift, value);
+        if (shift == 24u) {
+            intc->hold &= ~intc->ack_write_scratch;
+            /* The INT_LEVEL_MASK bits are a continuous signal level. They are not a latched
+               request. An acknowledge must not clear them. See the comment on INT_LEVEL_MASK in
+               intc.h. */
+            intc->status &= ~(intc->ack_write_scratch & ~INT_LEVEL_MASK);
+        }
+        break;
+    }
+    update_buttons(intc);
+}
+
+static void intc_set_line_body(intc_t *intc, uint32_t line, int state) {
+    if (line == 0) {
+        return;
+    }
+    if (state) {
+        /* Each asserted source latches into `hold`.
+           This causes real IRQ delivery, through hold & enable & INT_IRQ_MASK.
+           The STATUS_MASK bits (the buttons and the RTC) also latch into `status`, for a direct
+           read.
+
+           The BIOS needs the latch into `hold`. Its top-level IRQ handler tests
+           `hold & enable & 0x200` (RTC), and its periodic callback tests `hold & 1` (the Action
+           button). Both tests reach real handlers: the RTC acknowledge, and the day-rollover data
+           (see docs/hardware-notes.md). */
+        intc->hold |= line;
+        intc->status |= line & INT_STATUS_MASK;
+    } else {
+        /* A source in INT_LATCH_MASK keeps its request until an acknowledge. */
+        intc->status &= ~line;
+        intc->hold &= ~(line & ~INT_LATCH_MASK);
+    }
+    /* The HOLD bit of a button follows its level and its ENABLE bit, and it is not a latch. */
+    update_buttons(intc);
+}
+
+uint32_t intc_get_line(intc_t *intc, uint32_t line) {
+    return intc->status & line;
+}
+
+static void intc_clear_status_only_body(intc_t *intc, uint32_t line) {
+    intc->status &= ~line;
+    update_buttons(intc);
+}
+
+static void intc_set_level_and_pulse_body(intc_t *intc, uint32_t line, int level) {
+    if (line == 0) {
+        return;
+    }
+    /* Each edge latches an interrupt request, for both directions.
+       See the comment on this function in intc.h. */
+    intc->hold |= line;
+    if (level) {
+        intc->status |= line & INT_STATUS_MASK;
+    } else {
+        intc->status &= ~line;
+    }
+    update_buttons(intc);
+}
+
+int intc_irq_asserted(intc_t *intc) {
+    return (intc->hold & intc->enable & INT_IRQ_MASK) != 0;
+}
+
+int intc_fiq_asserted(intc_t *intc) {
+    return (intc->hold & intc->enable & INT_FIQ_MASK) != 0;
+}
+
+/* The public functions that change the controller. Each one counts a change. See `changes` in
+   intc.h. */
+void intc_write8(intc_t *intc, uint32_t offset, uint8_t value) {
+    uint32_t hold = intc->hold, status = intc->status, enable = intc->enable;
+    intc_write8_body(intc, offset, value);
+    if (intc->hold != hold || intc->status != status || intc->enable != enable) {
+        intc->changes++;
+    }
+}
+
+void intc_set_line(intc_t *intc, uint32_t line, int state) {
+    uint32_t hold = intc->hold, status = intc->status, enable = intc->enable;
+    intc_set_line_body(intc, line, state);
+    if (intc->hold != hold || intc->status != status || intc->enable != enable) {
+        intc->changes++;
+    }
+}
+
+void intc_clear_status_only(intc_t *intc, uint32_t line) {
+    uint32_t hold = intc->hold, status = intc->status, enable = intc->enable;
+    intc_clear_status_only_body(intc, line);
+    if (intc->hold != hold || intc->status != status || intc->enable != enable) {
+        intc->changes++;
+    }
+}
+
+void intc_set_level_and_pulse(intc_t *intc, uint32_t line, int level) {
+    uint32_t hold = intc->hold, status = intc->status, enable = intc->enable;
+    intc_set_level_and_pulse_body(intc, line, level);
+    if (intc->hold != hold || intc->status != status || intc->enable != enable) {
+        intc->changes++;
+    }
+}

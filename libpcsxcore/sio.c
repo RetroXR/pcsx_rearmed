@@ -22,11 +22,13 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include "misc.h"
 #include "psxcounters.h"
 #include "psxevents.h"
 #include "sio.h"
+#include "pocketstation.h"
 #include <sys/stat.h>
 
 #ifdef USE_LIBRETRO_VFS
@@ -88,6 +90,21 @@ static unsigned int parp;
 static unsigned int mcdst, rdwr;
 static unsigned char adrH, adrL;
 static unsigned int padst;
+/* The slot whose PocketStation is in a command (from its 81h until DTR drops), or -1. */
+static int pkst_port = -1;
+/* Its replies, queued as the SIO's receive FIFO queues them: a driver may send the next byte
+   before it reads the last reply (the BIOS does, after a read's LSB) and then read both. */
+static unsigned char pkst_fifo[8];
+static int pkst_fifo_head, pkst_fifo_n;
+
+static void pkst_push(unsigned char reply)
+{
+	if (pkst_fifo_n < (int)sizeof(pkst_fifo)) {
+		pkst_fifo[(pkst_fifo_head + pkst_fifo_n) % sizeof(pkst_fifo)] = reply;
+		pkst_fifo_n++;
+	}
+	StatReg |= RX_RDY;
+}
 
 char Mcd1Data[MCD_SIZE], Mcd2Data[MCD_SIZE];
 
@@ -106,6 +123,17 @@ void sioWrite8(unsigned char value) {
 	printf("%d:%03d sio write8    %04x %02x\n", frame_counter,
 		(s32)(framec / (PSXCLK / 60 / 263.0f)), CtrlReg, value);
 #endif
+	if (pkst_port >= 0) {
+		/* A PocketStation's own kernel answers every byte of its command: the reply is the
+		   device's, and only a byte it acknowledges raises the IRQ (its last byte has none,
+		   which is how the console's driver learns the command is over). */
+		int acked;
+		pkst_push(PocketStationByte(pkst_port, value, &acked));
+		if (acked)
+			set_event(PSXINT_SIO, SIO_CYCLES);
+		return;
+	}
+
 	switch (padst) {
 		case 1:
 			if ((value & 0x40) == 0x40) {
@@ -148,7 +176,18 @@ void sioWrite8(unsigned char value) {
 			switch (value) {
 				case 0x52: rdwr = 1; break;
 				case 0x57: rdwr = 2; break;
-				default: mcdst = 0;
+				default:
+				{
+					/* A card answers only 52h/57h here: anything else (53h get-ID,
+					   a PocketStation's 50h, 58h..5Fh) ends the exchange. Said once
+					   per command byte, so a game asking for a PocketStation shows. */
+					static unsigned char seen[256];
+					if (!seen[value]) {
+						seen[value] = 1;
+						SysWarn("[memcard] slot %d: command %02xh not answered\n", port + 1, value);
+					}
+					mcdst = 0;
+				}
 			}
 			return;
 		case 2: // address H
@@ -235,6 +274,21 @@ void sioWrite8(unsigned char value) {
 		case 0x81: // start memcard
 			if (McdDisable[port])
 				goto no_device;
+			if (PocketStationWanted(port)) {
+				int acked;
+				/* Docked but its kernel not talking yet: an empty slot, as a card still
+				   going in would be. */
+				if (!PocketStationActive(port))
+					goto no_device;
+				pkst_port = port;
+				pkst_fifo_head = pkst_fifo_n = 0;
+				pkst_push(PocketStationByte(port, value, &acked));
+				if (acked)
+					set_event(PSXINT_SIO, SIO_CYCLES);
+				else
+					pkst_port = -1;
+				return;
+			}
 			memcpy(buf, cardh, 4);
 			buf[1] = McdFlag[port];
 			StatReg |= RX_RDY;
@@ -262,9 +316,16 @@ void sioWriteMode16(unsigned short value) {
 }
 
 void sioWriteCtrl16(unsigned short value) {
+	if (pkst_port >= 0 && getenv("PKST_TRACE"))
+		SysWarn("[pocketstation] ctrl %04x stat %04x\n", value, StatReg);
 	CtrlReg = value & ~RESET_ERR;
 	if (value & RESET_ERR) StatReg &= ~IRQ;
 	if ((CtrlReg & SIO_RESET) || !(CtrlReg & DTR)) {
+		if (pkst_port >= 0) {
+			PocketStationRelease(pkst_port);
+			pkst_port = -1;
+		}
+		pkst_fifo_head = pkst_fifo_n = 0;
 		padst = 0; mcdst = 0; parp = 0;
 		StatReg = TX_RDY | TX_EMPTY;
 		psxRegs.interrupt &= ~(1 << PSXINT_SIO);
@@ -277,6 +338,15 @@ void sioWriteBaud16(unsigned short value) {
 
 unsigned char sioRead8() {
 	unsigned char ret = 0;
+	if (pkst_fifo_n > 0) {
+		ret = pkst_fifo[pkst_fifo_head];
+		pkst_fifo_head = (pkst_fifo_head + 1) % sizeof(pkst_fifo);
+		if (--pkst_fifo_n == 0)
+			StatReg &= ~RX_RDY;
+		return ret;
+	}
+	if (pkst_port >= 0 && getenv("PKST_TRACE"))
+		SysWarn("[pocketstation] read (empty) %02x stat %04x\n", buf[parp], StatReg);
 
 	if ((StatReg & RX_RDY)/* && (CtrlReg & RX_PERM)*/) {
 //		StatReg &= ~RX_OVERRUN;
@@ -801,6 +871,8 @@ void GetMcdBlockInfo(int mcd, int block, McdBlock *Info) {
 
 void sioReset() {
 	McdFlag[0] = McdFlag[1] = 8;
+	pkst_port = -1;
+	pkst_fifo_head = pkst_fifo_n = 0;
 }
 
 int sioFreeze(void *f, int Mode) {
