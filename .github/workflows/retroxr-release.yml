@@ -194,7 +194,7 @@ jobs:
   # x86_64 leg does not pick up the arm64 NEON renderer from the host.
   macos:
     name: macOS ${{ matrix.arch }}
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       matrix:
         include:
