@@ -53,6 +53,7 @@ unsigned short sioReadBaud16();
 void sioReset();
 void sioInterrupt();
 int sioFreeze(void *f, int Mode);
+int sioPocketStationFreeze(void *f, int Mode);
 
 void LoadMcd(int mcd, char *str);
 void LoadMcds(char *mcd1, char *mcd2);

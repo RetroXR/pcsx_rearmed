@@ -33,6 +33,7 @@
 #include "../libpcsxcore/new_dynarec/new_dynarec.h"
 #include "../libpcsxcore/cdrom.h"
 #include "../libpcsxcore/pocketstation.h"
+#include "DeviceDisplayInterface.h"
 #include "../libpcsxcore/cdrom-async.h"
 #include "../libpcsxcore/cdriso.h"
 #include "../libpcsxcore/cheat.h"
@@ -150,6 +151,8 @@ static bool memcard_insert_pending;
 // anything is cabled to this console: with no peers the bus grants without
 // bound and the port behaves as one with a dead cable in it.
 static const struct retro_link_interface *link_interface;
+static struct retro_device_display_interface device_display;
+static bool device_display_ok;
 static bool link_attached;
 
 typedef enum
@@ -1271,8 +1274,10 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 size_t retro_serialize_size(void)
 {
    // it's currently 4380651-4397047 bytes,
-   // but have some reserved for future
-   return 0x440000;
+   // but have some reserved for future. Plus room for a PocketStation in each
+   // slot (RetroXR), always, so the size never changes during a run: a frontend
+   // measures it once, and a netplay session compares it.
+   return 0x440000 + 16 + PocketStationFreezeSize();
 }
 
 struct save_fp
@@ -4142,6 +4147,15 @@ void retro_init(void)
          link_interface = &link;
    }
 
+   // A docked PocketStation's screen goes to a frontend that shows it on the
+   // device; with none it is not drawn at all (the picture is the console's).
+   memset(&device_display, 0, sizeof(device_display));
+   device_display_ok = (environ_cb(RETRO_ENVIRONMENT_GET_DEVICE_DISPLAY_INTERFACE, &device_display) ||
+         environ_cb(RETRO_ENVIRONMENT_GET_DEVICE_DISPLAY_INTERFACE_FINAL, &device_display))
+      && device_display.interface_version >= 1 && device_display.refresh != NULL;
+   SysWarn("[pocketstation] device screens: %s" "\n",
+      device_display_ok ? "handed to the frontend" : "not offered");
+
    check_system_specs();
 }
 
@@ -4214,6 +4228,16 @@ void SysPrintf(const char *fmt, ...)
 }
 
 /* Prints at WARN: libretro-godot drops anything quieter. */
+
+/* The screen of a device in memory card slot `slot` (a PocketStation), to the
+   frontend's device display interface. False when there is none to take it. */
+bool plat_card_device_screen(int slot, const uint32_t *pixels, unsigned width, unsigned height)
+{
+   return device_display_ok
+      && device_display.refresh(device_display.frontend_data, RETRO_DEVICE_DISPLAY_MEMORY_CARD,
+            (unsigned)slot, 0, pixels, width, height);
+}
+
 void SysWarn(const char *fmt, ...)
 {
    va_list list;

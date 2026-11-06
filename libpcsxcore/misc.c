@@ -834,6 +834,7 @@ int SaveState(const char *file) {
 	ndrc_freeze(f, 1);
 	padFreeze(f, 1);
 	sio1Freeze(f, 1);
+	sioPocketStationFreeze(f, 1);
 
 	memset(misc, 0, sizeof(*misc));
 	SaveFuncs.close(f);
@@ -975,6 +976,9 @@ int LoadState(const char *file) {
 	// load always used to give it.
 	if (!sio1Freeze(f, 0))
 		sio1Reset();
+	// A docked PocketStation, whole. A state from before it has none, and the
+	// slots keep what they hold.
+	sioPocketStationFreeze(f, 0);
 
 	events_restore();
 	if (Config.HLE)

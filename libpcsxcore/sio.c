@@ -875,6 +875,34 @@ void sioReset() {
 	pkst_fifo_head = pkst_fifo_n = 0;
 }
 
+/* The PocketStation half of the port: which slot is mid-command and the replies it has
+   queued, then the devices themselves. After every other chunk, so an older state just
+   ends before it (PocketStationFreeze then returns 0 and nothing changes). */
+int sioPocketStationFreeze(void *f, int Mode) {
+	u32 magic = 0x4f495350u; /* "PSIO" */
+	s32 port = pkst_port, head = pkst_fifo_head, n = pkst_fifo_n;
+	if (Mode) {
+		SaveFuncs.write(f, &magic, sizeof(magic));
+		SaveFuncs.write(f, &port, sizeof(port));
+		SaveFuncs.write(f, &head, sizeof(head));
+		SaveFuncs.write(f, &n, sizeof(n));
+		SaveFuncs.write(f, pkst_fifo, sizeof(pkst_fifo));
+		return PocketStationFreeze(f, 1);
+	}
+	magic = 0;
+	SaveFuncs.read(f, &magic, sizeof(magic));
+	if (magic != 0x4f495350u)
+		return 0;
+	SaveFuncs.read(f, &port, sizeof(port));
+	SaveFuncs.read(f, &head, sizeof(head));
+	SaveFuncs.read(f, &n, sizeof(n));
+	SaveFuncs.read(f, pkst_fifo, sizeof(pkst_fifo));
+	pkst_port = (port == 0 || port == 1) ? port : -1;
+	pkst_fifo_head = (head >= 0 && head < (s32)sizeof(pkst_fifo)) ? head : 0;
+	pkst_fifo_n = (n >= 0 && n <= (s32)sizeof(pkst_fifo)) ? n : 0;
+	return PocketStationFreeze(f, 0);
+}
+
 int sioFreeze(void *f, int Mode) {
 	gzfreeze(buf, sizeof(buf));
 	gzfreeze(&StatReg, sizeof(StatReg));
