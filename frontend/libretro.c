@@ -93,8 +93,7 @@
 #define RETRO_ENVIRONMENT_SET_SAVE_STATE_DISABLE_UNDO 0x800005
 #endif
 
-//hack to prevent retroarch freezing when reseting in the menu but not while running with the hot key
-static int rebootemu = 0;
+static bool reset_pending = false;
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -1387,6 +1386,9 @@ bool retro_unserialize(const void *data, size_t size)
       return false;
    if (CdromFrontendId != -1 && CdromFrontendId != disk_current_index)
       disk_set_image_index(CdromFrontendId);
+   /* a successful restore overrides any reset requested before this call,
+    * otherwise the next retro_run() would silently discard it */
+   reset_pending = false;
    return true;
 }
 
@@ -1543,13 +1545,13 @@ static unsigned int disk_get_image_index(void)
 
 static bool disk_set_image_index(unsigned int index)
 {
-   if (index >= sizeof(disks) / sizeof(disks[0]))
+   if (index > disk_count)
       return false;
 
    CdromId[0] = '\0';
    CdromLabel[0] = '\0';
 
-   if (disks[index].fname == NULL)
+   if (index == disk_count || disks[index].fname == NULL)
    {
       LogErr("missing disk #%u\n", index);
       cdra_shutdown();
@@ -1748,7 +1750,11 @@ static bool read_m3u(const char *file)
          char disk_label[PATH_MAX];
          disk_label[0] = '\0';
 
-         snprintf(name, sizeof(name), "%s%c%s", base_dir, SLASH, line);
+         if (line[0] == '/' || line[0] == '\\' ||
+             (line[1] == ':' && (line[2] == '/' || line[2] == '\\')))
+            snprintf(name, sizeof(name), "%s", line);
+         else
+            snprintf(name, sizeof(name), "%s%c%s", base_dir, SLASH, line);
          disks[disk_count].fname = strdup(name);
 
          get_disk_label(disk_label, name, PATH_MAX);
@@ -1960,7 +1966,8 @@ static void show_enabled_hacks(void)
       count++;
    }
 #if !defined(DRC_DISABLE) && !defined(LIGHTREC)
-   if (ndrc_g.hacks & (NDHACK_NO_SMC_CHECK|NDHACK_GTE_UNNEEDED|NDHACK_GTE_NO_FLAGS)) {
+   if (ndrc_g.hacks & (NDHACK_NO_SMC_CHECK|NDHACK_GTE_UNNEEDED|NDHACK_GTE_NO_FLAGS|
+                       NDHACK_NO_LD_DELAY)) {
       snprintf(p, sizeof(msg) - (p - msg), "%s%s", count ? ", " : "",
             "DRC Hacks");
       p += strlen(p);
@@ -2202,7 +2209,7 @@ bool retro_load_game(const struct retro_game_info *info)
    if (is_exe)
       ret = Load(info->path);
    else
-      ret = LoadCdrom();
+      ret = LoadCdromMainExe(NULL);
    if (ret != 0)
    {
       LogErr("could not load %s (%d)\n", is_exe ? "exe" : "CD", ret);
@@ -2289,7 +2296,7 @@ size_t retro_get_memory_size(unsigned id)
 void retro_reset(void)
 {
    //hack to prevent retroarch freezing when reseting in the menu but not while running with the hot key
-   rebootemu = 1;
+   reset_pending = true;
    //SysReset();
 }
 
@@ -2671,6 +2678,16 @@ static void update_variables(bool in_flight)
          ndrc_g.hacks |= NDHACK_NO_COMPAT_HACKS;
       else
          ndrc_g.hacks &= ~NDHACK_NO_COMPAT_HACKS;
+   }
+
+   var.value = NULL;
+   var.key = "pcsx_rearmed_nolddelay";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         ndrc_g.hacks |= NDHACK_NO_LD_DELAY;
+      else
+         ndrc_g.hacks &= ~NDHACK_NO_LD_DELAY;
    }
 #endif /* !DRC_DISABLE && !LIGHTREC */
 
@@ -3606,13 +3623,15 @@ static void prepare_bios(bool use_hle);
 void retro_run(void)
 {
    //SysReset must be run while core is running,Not in menu (Locks up Retroarch)
-   if (rebootemu != 0)
+   if (reset_pending)
    {
-      rebootemu = 0;
+      reset_pending = false;
       prepare_bios(get_bios_config_hle());
       SysReset();
-      if (Config.HLE)
-         LoadCdrom();
+      if (CheckResetManualExe())
+         ;
+      else if (Config.HLE)
+         LoadCdromMainExe(NULL);
    }
 
    set_vout_fb();

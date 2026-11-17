@@ -429,6 +429,17 @@ static void emit_movimm64(uint64_t imm, u_int rt)
   }
 }
 
+static void emit_readbyte(void *addr, u_int rt)
+{
+  uintptr_t offset = (u_char *)addr - (u_char *)&dynarec_local;
+  if (offset <= 4095) {
+    assem_debug("ldrb %s,[x%d+%#lx]%s\n", regname[rt], FP, offset, fpofs_name(offset));
+    output_w32(0x39400000 | imm12_rn_rd(offset, FP, rt));
+  }
+  else
+    abort();
+}
+
 static void emit_readword(void *addr, u_int rt)
 {
   uintptr_t offset = (u_char *)addr - (u_char *)&dynarec_local;
@@ -1340,7 +1351,6 @@ static void restore_regs(u_int reglist)
 
 static void literal_pool(int n)
 {
-  (void)literals;
 }
 
 static void literal_pool_jumpover(int n)
@@ -2151,6 +2161,10 @@ static void arch_init(void)
     ops[i].br  = 0xd61f0000 | rm_rn_rd(0, 17, 0);      // br x17
   }
   end_tcache_write(ops, (u_char *)ops + sizeof(ndrc->tramp.ops), 1);
+}
+
+static void arch_begin_block(void)
+{
 }
 
 // vim:shiftwidth=2:expandtab

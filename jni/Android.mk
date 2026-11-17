@@ -88,7 +88,7 @@ SOURCES_C += $(FRONTEND_DIR)/main.c \
 
 # libchdr
 LCHDR = $(DEPS_DIR)/libchdr
-LCHDR_LZMA = $(LCHDR)/deps/lzma-25.01
+LCHDR_LZMA = $(LCHDR)/deps/lzma-26.02
 LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.7
 SOURCES_C += \
 	     $(LCHDR)/src/libchdr_bitstream.c \
@@ -129,6 +129,7 @@ SOURCES_C += \
              $(LIBRETRO_COMMON)/streams/file_stream.c \
              $(LIBRETRO_COMMON)/streams/file_stream_transforms.c \
              $(LIBRETRO_COMMON)/string/stdstring.c \
+             $(LIBRETRO_COMMON)/string/rstrtod.c \
              $(LIBRETRO_COMMON)/time/rtime.c \
              $(LIBRETRO_COMMON)/vfs/vfs_implementation.c
 COREFLAGS += -DUSE_LIBRETRO_VFS

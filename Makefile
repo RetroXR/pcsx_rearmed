@@ -101,7 +101,7 @@ POKKET_SRCS = arm_exec clk com cpu dac flash intc iop ir lcd memory psemu rtc st
 OBJS += $(patsubst %,deps/pokket/src/%.o,$(POKKET_SRCS))
 CFLAGS += -Ideps/pokket/include
 deps/pokket/src/%.o: CFLAGS += -Ideps/pokket/src -std=gnu99
-#OBJS += libpcsxcore/debug.o libpcsxcore/socket.o libpcsxcore/disr3000a.o
+#OBJS += libpcsxcore/disr3000a.o
 
 ifeq "$(ARCH)" "arm"
 OBJS += libpcsxcore/gte_arm.o
@@ -321,7 +321,7 @@ endif
 # libchdr
 ifeq "$(HAVE_CHD)" "1"
 LCHDR = deps/libchdr
-LCHDR_LZMA = $(LCHDR)/deps/lzma-25.01
+LCHDR_LZMA = $(LCHDR)/deps/lzma-26.02
 LCHDR_ZSTD = $(LCHDR)/deps/zstd-1.5.7
 OBJS += $(LCHDR)/src/libchdr_bitstream.o
 OBJS += $(LCHDR)/src/libchdr_cdrom.o
@@ -353,7 +353,7 @@ endif
 
 # zlib/miniz
 ifeq ($(USE_MINIZ),1)
-MINIZ_DIR = deps/libchdr/deps/miniz-3.1.1
+MINIZ_DIR = deps/libchdr/deps/miniz-3.1.2
 CFLAGS += -I$(MINIZ_DIR) -DUSE_MINIZ
 OBJS += $(MINIZ_DIR)/miniz.o
 $(MINIZ_DIR)/miniz.o: CFLAGS += -DMINIZ_NO_STDIO -DMINIZ_NO_DEFLATE_APIS -DMINIZ_NO_ARCHIVE_APIS
@@ -438,6 +438,7 @@ OBJS += deps/libretro-common/compat/compat_strl.o
 OBJS += deps/libretro-common/file/file_path.o
 OBJS += deps/libretro-common/file/file_path_io.o
 OBJS += deps/libretro-common/string/stdstring.o
+OBJS += deps/libretro-common/string/rstrtod.o
 OBJS += deps/libretro-common/vfs/vfs_implementation.o
 endif
 ifeq "$(HAVE_PHYSICAL_CDROM)" "1"

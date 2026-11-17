@@ -183,7 +183,11 @@
 
 // mac 123 without flags (expensive to calculate, rarely used)
 // if your platform is slow, consider adding it here
-#if defined(FLAGLESS) || (defined(__arm__) && !defined(HAVE_ARMV5))
+#if !defined(GTE_MAC123_FLAGLESS) && (defined(FLAGLESS) || (defined(__arm__) && !defined(HAVE_ARMV5)))
+#define GTE_MAC123_FLAGLESS 1
+#endif
+
+#if GTE_MAC123_FLAGLESS
 
 static inline s64 mac123add4(u32 id, u32 *flags, s32 a1, s32 a2, s32 a3, s32 a4, int shift) {
 	return (((s64)a1 << 12) + a2 + a3 + a4) >> shift;
@@ -384,15 +388,6 @@ static inline u32 getFinalFlag(u32 flags) {
 #define limG2(flags, a) LIM(flags, a,  0x3ff, -0x400, (1u << 13))
 #define limH(flags, a)  LIM(flags, a, 0x1000, 0x0000, (1u << 12))
 
-//senquack - n param should be unsigned (will be 'gteH' reg which is u16)
-#ifdef GTE_USE_NATIVE_DIVIDE
-INLINE u32 DIVIDE(u16 n, u16 d) {
-	return ((u32)n << 16) / d;
-}
-#else
-#include "gte_divider.h"
-#endif // GTE_USE_NATIVE_DIVIDE
-
 #ifndef FLAGLESS
 
 const unsigned char gte_cycletab[64] = {
@@ -525,13 +520,17 @@ void CTC2(struct psxCP2Regs *regs, u32 value, int reg) {
 
 #endif // FLAGLESS
 
-#if 0
-#define DIVIDE DIVIDE_
-static u32 DIVIDE_(s16 n, u16 d) {
-	s32 n_ = n;
-	return ((n_ << 16) + d / 2) / d;
-	//return (u32)((float)(n_ << 16) / (float)d + (float)0.5);
+//#define GTE_USE_NATIVE_DIVIDE
+#ifdef GTE_USE_NATIVE_DIVIDE
+
+// more mathematically correct, but not what the real hardware does
+// (wrong for ~24.72% denominators)
+static inline u32 DIVIDE(u16 n, u16 d) {
+	return (((u32)n << 16) + (d >> 1)) / d;
 }
+
+#else
+#include "gte_divider.h"
 #endif
 
 static inline s32 divide(u32 *flags, u16 h, u16 sz3)
@@ -702,6 +701,17 @@ static inline force_inline void gteMVMVA(psxCP2Regs *regs,
 	const s32 *cvp = (s32 *)&regs->CP2C.r[(cv << 3) + 5];
 	const s32 cv3[3] = { 0, 0, 0 };
 	s16 mx3[9];
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	const s16 v0[3] = { VX(v), VY(v), VZ(v) };
+	int i;
+
+	vp = v0;
+	if (mx < 3) {
+		mxp = mx3;
+		for (i = 0; i < 9; i++)
+			mx3[i] = regs->CP2C.r[(mx << 3) + (i >> 1)] >> ((i & 1) * 16);
+	}
+#endif
 
 	GTE_LOG("GTE MVMVA\n");
 
@@ -800,6 +810,12 @@ static inline force_inline void runColor1(psxCP2Regs *regs, u32 *flags, int shif
 	s32 mac1, mac2, mac3;
 	s32 ir1, ir2, ir3;
 	s32 vx, vy, vz;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	const s16 color_matrix[9] = { gteLR1, gteLR2, gteLR3,
+		gteLG1, gteLG2, gteLG3, gteLB1, gteLB2, gteLB3 };
+#else
+	const s16 *color_matrix = &gteLR1;
+#endif
 
 	vx = VX(v);
 	vy = VY(v);
@@ -810,7 +826,7 @@ static inline force_inline void runColor1(psxCP2Regs *regs, u32 *flags, int shif
 	ir1 = limB1(flags, mac1, lm);
 	ir2 = limB2(flags, mac2, lm);
 	ir3 = limB3(flags, mac3, lm);
-	*flags |= gteMAC123f(regs, ir1, ir2, ir3, &gteLR1, &gteRBK, shift);
+	*flags |= gteMAC123f(regs, ir1, ir2, ir3, color_matrix, &gteRBK, shift);
 	mac1 = gteMAC1;
 	mac2 = gteMAC2;
 	mac3 = gteMAC3;
@@ -1072,8 +1088,14 @@ static inline void runColor3(psxCP2Regs *regs, int shift, int lm, int is_cdp)
 	s32 mac1, mac2, mac3;
 	s32 ir1, ir2, ir3;
 	u32 flags;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	const s16 color_matrix[9] = { gteLR1, gteLR2, gteLR3,
+		gteLG1, gteLG2, gteLG3, gteLB1, gteLB2, gteLB3 };
+#else
+	const s16 *color_matrix = &gteLR1;
+#endif
 
-	flags = gteMAC123f(regs, gteIR1, gteIR2, gteIR3, &gteLR1, &gteRBK, shift);
+	flags = gteMAC123f(regs, gteIR1, gteIR2, gteIR3, color_matrix, &gteRBK, shift);
 	ir1 = limB1(&flags, gteMAC1, lm);
 	ir2 = limB2(&flags, gteMAC2, lm);
 	ir3 = limB3(&flags, gteMAC3, lm);

@@ -38,6 +38,9 @@
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #endif
 
+static u_int literals[1024][2];
+static int literalcount;
+
 void indirect_jump_indexed();
 void indirect_jump();
 void do_interrupt();
@@ -1208,6 +1211,14 @@ static void emit_ldrd(int offset, int rs, int rt)
   }else{
     output_w32(0xe14000d0|rd_rn_rm(rt,rs,0)|(((-offset)<<4)&0xf00)|((-offset)&0xf));
   }
+}
+
+static void emit_readbyte(void *addr, int rt)
+{
+  uintptr_t offset = (u_char *)addr - (u_char *)&dynarec_local;
+  assert(offset < 4096);
+  assem_debug("ldrb %s,fp+%#x%s\n", regname[rt], offset, fpofs_name(offset));
+  output_w32(0xe5d00000|rd_rn_rm(rt,FP,0)|offset);
 }
 
 static void emit_readword(void *addr, int rt)
@@ -2394,6 +2405,12 @@ static void arch_init(void)
   for (i = 0; i < ARRAY_SIZE(ndrc->tramp.ops); i++)
     ops[i].ldrpc = 0xe5900000 | rd_rn_rm(15,15,0) | diff; // ldr pc, [=val]
   end_tcache_write(ops, (u_char *)ops + sizeof(ndrc->tramp.ops), 1);
+}
+
+static void arch_begin_block(void)
+{
+  assert(literalcount == 0);
+  literalcount = 0;
 }
 
 // vim:shiftwidth=2:expandtab
