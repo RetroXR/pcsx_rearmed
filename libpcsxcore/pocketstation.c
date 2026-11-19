@@ -131,6 +131,7 @@ static int attach(int slot)
 {
 	unsigned char bios[PSEMU_BIOS_SIZE];
 	double boot_ms = 0;
+	int boot_frames;
 	drop(slot);
 	if (Config.HLE) {
 		SysWarn("[pocketstation] slot %d: the HLE BIOS reads cards directly, not over the bus; "
@@ -153,13 +154,24 @@ static int attach(int slot)
 	lcd_valid[slot] = 0;
 	{
 		int i;
+		/* PKST_BOOT_FRAMES in the environment overrides it, for probes: 0 docks the unit
+		   straight from power-on, so its boot chime plays docked (and its BIOS draws nothing). */
+		const char *env = getenv("PKST_BOOT_FRAMES");
+		boot_frames = env ? atoi(env) : PKST_BOOT_FRAMES;
 		clock_t t0 = clock();
-		for (i = 0; i < PKST_BOOT_FRAMES; i++)
+		for (i = 0; i < boot_frames; i++)
 			psemu_run(dev[slot], PKST_FRAME_REF_CYCLES);
 		boot_ms = (double)(clock() - t0) * 1000.0 / CLOCKS_PER_SEC;
 	}
+	{
+		/* What it played booting is from before the dock: thrown away, or the first drain
+		   plays its startup chime late (Pokket's buffer keeps the oldest second of it). */
+		int16_t sink[512];
+		while (psemu_get_audio_samples(dev[slot], sink, sizeof(sink) / sizeof(sink[0])) > 0)
+			;
+	}
 	psemu_com_set_docked(dev[slot], 1);
-	SysWarn("[pocketstation] slot %d: a PocketStation, booted %d frames on its own, docked in %.0f ms (BIOS revision %s)\n", slot + 1, PKST_BOOT_FRAMES, boot_ms,
+	SysWarn("[pocketstation] slot %d: a PocketStation, booted %d frames on its own, docked in %.0f ms (BIOS revision %s)\n", slot + 1, boot_frames, boot_ms,
 		psemu_settings_offsets_known(dev[slot]) ? "J110 as Pokket traced it" : "other");
 	return 1;
 }
