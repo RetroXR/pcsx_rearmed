@@ -4154,23 +4154,19 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
-   // Probe the experimental number first and the plain one after, so a build
-   // made today keeps working against a frontend that has since adopted the
-   // unflagged command.
+   // The link interface (libretro/RetroArch#19454), at its EXPERIMENTAL number.
    {
       static struct retro_link_interface link;
 
       memset(&link, 0, sizeof(link));
-      if (environ_cb(RETRO_ENVIRONMENT_GET_LINK_INTERFACE, &link) ||
-          environ_cb(RETRO_ENVIRONMENT_GET_LINK_INTERFACE_FINAL, &link))
+      if (environ_cb(RETRO_ENVIRONMENT_GET_LINK_INTERFACE, &link))
          link_interface = &link;
    }
 
    // A docked PocketStation's screen goes to a frontend that shows it on the
    // device; with none it is not drawn at all (the picture is the console's).
    memset(&device_display, 0, sizeof(device_display));
-   device_display_ok = (environ_cb(RETRO_ENVIRONMENT_GET_DEVICE_DISPLAY_INTERFACE, &device_display) ||
-         environ_cb(RETRO_ENVIRONMENT_GET_DEVICE_DISPLAY_INTERFACE_FINAL, &device_display))
+   device_display_ok = (environ_cb(RETRO_ENVIRONMENT_GET_DEVICE_DISPLAY_INTERFACE, &device_display))
       && device_display.interface_version >= 1 && device_display.refresh != NULL;
    SysWarn("[pocketstation] device screens: %s" "\n",
       device_display_ok ? "handed to the frontend" : "not offered");
