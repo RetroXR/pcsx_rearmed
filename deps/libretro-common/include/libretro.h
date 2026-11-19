@@ -2915,8 +2915,7 @@ struct retro_memory_status
  * pointers remain valid until retro_deinit, whether or not anything ever
  * attaches, so a core has exactly one code path and still runs standalone.
  *
- * Flagged EXPERIMENTAL, at the number libretro/RetroArch#19454 proposes, until
- * upstream merges it. (It was 94 until upstream gave 94 to another call.)
+ * EXPERIMENTAL until libretro/RetroArch#19454 is merged.
  */
 #define RETRO_ENVIRONMENT_GET_LINK_INTERFACE       (107 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 

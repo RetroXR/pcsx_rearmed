@@ -4154,7 +4154,7 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
-   // The link interface (libretro/RetroArch#19454), at its EXPERIMENTAL number.
+   // Link interface (libretro/RetroArch#19454).
    {
       static struct retro_link_interface link;
 
