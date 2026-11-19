@@ -154,7 +154,7 @@ static const struct retro_link_interface *link_interface;
 static struct retro_device_display_interface device_display;
 static bool device_display_ok;
 // A docked PocketStation's speaker goes to a frontend that plays it from the device
-// (version 2's push_device, a memory card location); otherwise it is mixed in.
+// (a memory card location); otherwise it is mixed in.
 static struct retro_controller_audio_interface controller_audio;
 static bool controller_audio_ok;
 static bool link_attached;
@@ -902,7 +902,7 @@ static void snd_feed(void *buf, int bytes)
       if (frames == 0 || frames > sizeof(dev_buf) / sizeof(dev_buf[0]) / 2
             || !PocketStationAudioRead(slot, dev_buf, (unsigned)frames, 44100))
          continue;
-      if (controller_audio_ok && controller_audio.push_device(controller_audio.frontend_data,
+      if (controller_audio_ok && controller_audio.push(controller_audio.frontend_data,
                RETRO_CONTROLLER_AUDIO_MEMORY_CARD, (unsigned)slot, 0, dev_buf, frames))
          continue;
       for (i = 0; i < frames * 2; i++)
@@ -4200,9 +4200,8 @@ void retro_init(void)
       device_display_ok ? "handed to the frontend" : "not offered");
 
    memset(&controller_audio, 0, sizeof(controller_audio));
-   controller_audio.interface_version = RETRO_CONTROLLER_AUDIO_INTERFACE_VERSION;
    controller_audio_ok = environ_cb(RETRO_ENVIRONMENT_GET_CONTROLLER_AUDIO_INTERFACE, &controller_audio)
-      && controller_audio.interface_version >= 2 && controller_audio.push_device != NULL;
+      && controller_audio.interface_version >= 1 && controller_audio.push != NULL;
    SysWarn("[pocketstation] device speaker: %s" "\n",
       controller_audio_ok ? "handed to the frontend" : "mixed into the console's sound");
 
