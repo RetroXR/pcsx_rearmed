@@ -34,6 +34,7 @@
 #include "../libpcsxcore/cdrom.h"
 #include "../libpcsxcore/pocketstation.h"
 #include "DeviceDisplayInterface.h"
+#include "ControllerAudioInterface.h"
 #include "../libpcsxcore/cdrom-async.h"
 #include "../libpcsxcore/cdriso.h"
 #include "../libpcsxcore/cheat.h"
@@ -152,6 +153,10 @@ static bool memcard_insert_pending;
 static const struct retro_link_interface *link_interface;
 static struct retro_device_display_interface device_display;
 static bool device_display_ok;
+// A docked PocketStation's speaker goes to a frontend that plays it from the device
+// (version 2's push_device, a memory card location); otherwise it is mixed in.
+static struct retro_controller_audio_interface controller_audio;
+static bool controller_audio_ok;
 static bool link_attached;
 
 typedef enum
@@ -884,8 +889,31 @@ void pl_gun_byte2(int port, unsigned char byte)
 /* sound calls */
 static void snd_feed(void *buf, int bytes)
 {
+   const size_t frames = bytes / 4;
+   int slot;
+
+   // Each docked PocketStation's speaker over the same stretch: to the frontend just
+   // before the batch it goes with, or into the batch at half level when it declines.
+   for (slot = 0; slot < 2; slot++)
+   {
+      static int16_t dev_buf[2 * 4096];
+      int16_t *mix = (int16_t *)buf;
+      size_t i;
+      if (frames == 0 || frames > sizeof(dev_buf) / sizeof(dev_buf[0]) / 2
+            || !PocketStationAudioRead(slot, dev_buf, (unsigned)frames, 44100))
+         continue;
+      if (controller_audio_ok && controller_audio.push_device(controller_audio.frontend_data,
+               RETRO_CONTROLLER_AUDIO_MEMORY_CARD, (unsigned)slot, 0, dev_buf, frames))
+         continue;
+      for (i = 0; i < frames * 2; i++)
+      {
+         int v = mix[i] + dev_buf[i] / 2;
+         mix[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+      }
+   }
+
    if (audio_batch_cb != NULL)
-      audio_batch_cb(buf, bytes / 4);
+      audio_batch_cb(buf, frames);
 }
 
 void out_register_libretro(struct out_driver *drv)
@@ -4170,6 +4198,13 @@ void retro_init(void)
       && device_display.interface_version >= 1 && device_display.refresh != NULL;
    SysWarn("[pocketstation] device screens: %s" "\n",
       device_display_ok ? "handed to the frontend" : "not offered");
+
+   memset(&controller_audio, 0, sizeof(controller_audio));
+   controller_audio.interface_version = RETRO_CONTROLLER_AUDIO_INTERFACE_VERSION;
+   controller_audio_ok = environ_cb(RETRO_ENVIRONMENT_GET_CONTROLLER_AUDIO_INTERFACE, &controller_audio)
+      && controller_audio.interface_version >= 2 && controller_audio.push_device != NULL;
+   SysWarn("[pocketstation] device speaker: %s" "\n",
+      controller_audio_ok ? "handed to the frontend" : "mixed into the console's sound");
 
    check_system_specs();
 }

@@ -20,6 +20,10 @@
  * the COM link mid-byte) in a chunk of their own (PocketStationFreeze), so a load is exact
  * and a PlayStation with one docked can roll back. The state size is fixed for the run
  * whether or not a slot holds one, because a frontend measures it once.
+ *
+ * Docking does not silence the device's speaker (it is gated by the app, DAC_CTRL and IOP
+ * bit 5, nothing else), so its sound is drained every frame into a ring per slot and read
+ * out at the console's output rate by frontend/libretro.c (PocketStationAudioRead).
  */
 
 #include <stdio.h>
@@ -54,6 +58,25 @@ static unsigned char shadow[2][MCD_SIZE];
 /* The LCD as last handed to the frontend, and whether it has been since a dock. */
 static unsigned char lcd_sent[2][PSEMU_LCD_STRIDE * PSEMU_LCD_HEIGHT];
 static int lcd_valid[2];
+
+/* The speaker: mono s16 at PSEMU_AUDIO_SAMPLE_RATE_HZ, written on the emulation thread
+   (PocketStationFrame) and read on the one that hands the console's sound out, which can be
+   the SPU's worker. Single producer, single consumer: each side moves only its own index. */
+#define PKST_AUDIO_RING 4096u                        /* power of two; half a second */
+#define PKST_AUDIO_MAX_LAG (PSEMU_AUDIO_SAMPLE_RATE_HZ / 10) /* skip ahead past 100 ms queued */
+static int16_t audio_ring[2][PKST_AUDIO_RING];
+static unsigned audio_w[2], audio_r[2];
+/* The reader's place between two speaker samples, and the level it holds. */
+static double audio_pos[2];
+static int16_t audio_level[2];
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PKST_LOAD(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define PKST_STORE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+#else
+#define PKST_LOAD(p) (*(volatile unsigned *)(p))
+#define PKST_STORE(p, v) (*(volatile unsigned *)(p) = (v))
+#endif
 
 /* frontend/libretro.c: the frontend's device display interface, or false. */
 extern bool plat_card_device_screen(int slot, const uint32_t *pixels, unsigned width, unsigned height);
@@ -95,6 +118,9 @@ static void drop(int slot)
 	if (dev[slot])
 		psemu_destroy(dev[slot]);
 	dev[slot] = NULL;
+	PKST_STORE(&audio_r[slot], PKST_LOAD(&audio_w[slot]));
+	audio_pos[slot] = 0.0;
+	audio_level[slot] = 0;
 	enabled[slot] = 0;
 	selected[slot] = 0;
 }
@@ -190,6 +216,48 @@ static void send_screen(int slot)
 	lcd_valid[slot] = 1;
 }
 
+/* This frame's speaker samples into the slot's ring; past a full ring they are dropped. */
+static void drain_audio(int slot)
+{
+	int16_t tmp[512];
+	uint32_t n;
+	while ((n = psemu_get_audio_samples(dev[slot], tmp, sizeof(tmp) / sizeof(tmp[0]))) > 0) {
+		unsigned w = audio_w[slot], r = PKST_LOAD(&audio_r[slot]);
+		uint32_t i;
+		for (i = 0; i < n && w - r < PKST_AUDIO_RING; i++, w++)
+			audio_ring[slot][w & (PKST_AUDIO_RING - 1)] = tmp[i];
+		PKST_STORE(&audio_w[slot], w);
+		if (n < sizeof(tmp) / sizeof(tmp[0]))
+			break;
+	}
+}
+
+int PocketStationAudioRead(int slot, int16_t *out, unsigned frames, unsigned out_rate)
+{
+	const double step = (double)PSEMU_AUDIO_SAMPLE_RATE_HZ / (double)out_rate;
+	unsigned w, r, i;
+	if (slot < 0 || slot > 1 || !dev[slot] || !out || out_rate == 0)
+		return 0;
+	w = PKST_LOAD(&audio_w[slot]);
+	r = audio_r[slot];
+	/* Behind by more than a moment (a rollback ran frames again, the reader stalled): catch up
+	   rather than play the backlog late. */
+	if (w - r > PKST_AUDIO_MAX_LAG)
+		r = w - PSEMU_AUDIO_SAMPLE_RATE_HZ / 60;
+	/* A zero-order hold, as the DAC itself is: each speaker sample holds until the next. */
+	for (i = 0; i < frames; i++) {
+		audio_pos[slot] += step;
+		while (audio_pos[slot] >= 1.0) {
+			audio_pos[slot] -= 1.0;
+			if (r != w)
+				audio_level[slot] = audio_ring[slot][r++ & (PKST_AUDIO_RING - 1)];
+		}
+		out[i * 2] = out[i * 2 + 1] = audio_level[slot];
+	}
+	PKST_STORE(&audio_r[slot], r);
+	return 1;
+}
+
 void PocketStationSetWanted(int slot, int on)
 {
 	if (slot < 0 || slot > 1 || wanted[slot] == !!on)
@@ -223,6 +291,7 @@ void PocketStationFrame(void)
 			}
 		}
 		psemu_run(dev[slot], PKST_FRAME_REF_CYCLES);
+		drain_audio(slot);
 		send_screen(slot);
 		if (!enabled[slot] && psemu_com_is_enabled(dev[slot])) {
 			enabled[slot] = 1;
